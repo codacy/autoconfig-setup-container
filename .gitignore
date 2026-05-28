@@ -1,0 +1,4 @@
+.env
+analysis-cli/
+codacy-cloud-cli/
+gin-autoconfig-test-go/
