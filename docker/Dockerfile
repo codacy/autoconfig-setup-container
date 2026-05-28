@@ -1,6 +1,7 @@
 FROM node:20-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Firewall
@@ -24,9 +25,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     default-jdk-headless \
     # shellcheck — adapter finds it on PATH, skips the GitHub release download
     shellcheck \
+    # Ruby runtime — rubocop, reek, brakeman, sqlint
+    ruby \
+    ruby-dev \
+    build-essential \
   && rm -rf /var/lib/apt/lists/* \
   # Ensure `python` resolves (several tool adapters call `python3` but some call `python`)
-  && ln -sf /usr/bin/python3 /usr/local/bin/python
+  && ln -sf /usr/bin/python3 /usr/local/bin/python \
+  # Go runtime — revive type-checking rules
+  && curl -fsSL https://go.dev/dl/go1.26.3.linux-amd64.tar.gz | tar -C /usr/local -xz
 
 # Install CLIs globally as published packages
 RUN npm install -g \

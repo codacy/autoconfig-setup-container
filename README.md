@@ -14,7 +14,7 @@ Or from any folder, without the compose file:
 docker run --rm -it \
   --cap-add=NET_ADMIN --cap-add=NET_RAW \
   --device /dev/kmsg:/dev/kmsg \
-  --memory=5g --memory-swap=5g \
+  --memory=5.5g --memory-swap=5.5g \
   -v codacy-tool-cache:/home/node/.codacy \
   -v $(pwd):/workspace \
   -e CODACY_API_TOKEN -e ANTHROPIC_API_KEY -e GEMINI_API_KEY \
@@ -27,7 +27,7 @@ Or with an explicit env file:
 docker run --rm -it \
   --cap-add=NET_ADMIN --cap-add=NET_RAW \
   --device /dev/kmsg:/dev/kmsg \
-  --memory=5g --memory-swap=5g \
+  --memory=5.5g --memory-swap=5.5g \
   -v codacy-tool-cache:/home/node/.codacy \
   -v $(pwd):/workspace \
   --env-file /path/to/.env \
@@ -37,7 +37,7 @@ docker run --rm -it \
 docker run --rm -it \
 --cap-add=NET_ADMIN --cap-add=NET_RAW \
 --device /dev/kmsg:/dev/kmsg \
---memory=5g --memory-swap=5g \
+--memory=5.5g --memory-swap=5.5g \
 -v codacy-tool-cache:/home/node/.codacy \
 -v $(pwd):/workspace \
 --env-file ./../.env \
@@ -66,5 +66,5 @@ docker compose build
 - `codacy` — Codacy Cloud CLI
 - `codacy-analysis` — runs static analysis tools locally (trivy, ruff, opengrep, pmd, checkov, etc., downloaded on first use)
 - `claude` / `gemini` — AI assistants
-- Java 21, Python 3.12, shellcheck
+- Java 21, Python 3.12, Ruby, Go 1.26, shellcheck
 - Outbound firewall — allowlist only (GitHub, Codacy, Anthropic, Google, npm, PyPI)
