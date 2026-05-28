@@ -7,8 +7,8 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    mem_limit: 5.5g
-    memswap_limit: 5.5g
+    mem_limit: 12g
+    memswap_limit: 12g
     devices:
       - /dev/kmsg:/dev/kmsg
     volumes:
@@ -21,6 +21,7 @@ services:
       - CODACY_API_TOKEN
       - ANTHROPIC_API_KEY
       - GEMINI_API_KEY
+      - JAVA_OPTS=-Xmx1g
     stdin_open: true
     tty: true
 

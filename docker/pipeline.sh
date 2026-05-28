@@ -9,7 +9,8 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     --output-format stream-json \
     --verbose \
     --include-partial-messages \
-    | jq --unbuffered -rj 'select(.type == "stream_event" and .event.delta.type? == "text_delta") | .event.delta.text'
+    | jq --unbuffered -rj 'select(.type == "stream_event" and .event.delta.type? == "text_delta") | .event.delta.text' \
+    | sed -u 's/Starting Step/\nStarting Step/g; s/Moving to Step/\nMoving to Step/g'
 
 elif [ -n "${GEMINI_API_KEY:-}" ]; then
   echo "==> Running configure-codacy with Gemini..."
