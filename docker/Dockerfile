@@ -48,8 +48,9 @@ RUN git clone --depth 1 https://github.com/codacy/codacy-skills.git /opt/codacy-
 
 COPY docker/init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY docker/pipeline.sh /usr/local/bin/pipeline.sh
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/pipeline.sh \
+COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
+COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh \
   && printf 'node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh\nnode ALL=(root) NOPASSWD: /bin/chown -R node\\:node /home/node/.codacy\n' \
      > /etc/sudoers.d/node-firewall \
   && chmod 0440 /etc/sudoers.d/node-firewall
@@ -61,6 +62,7 @@ USER node
 COPY --chown=node:node docker/claude-settings.json /home/node/.claude/settings.json
 RUN mkdir -p /home/node/.claude/commands/references \
   && cp /opt/codacy-skills/skills/configure-codacy/SKILL.md /home/node/.claude/commands/configure-codacy.md \
+  && cp /opt/codacy-skills/skills/configure-codacy-cloud/SKILL.md /home/node/.claude/commands/configure-codacy-cloud.md \
   && cp /opt/codacy-skills/skills/codacy-analysis-cli/SKILL.md /home/node/.claude/commands/codacy-analysis-cli.md \
   && cp /opt/codacy-skills/skills/codacy-cloud-cli/SKILL.md /home/node/.claude/commands/codacy-cloud-cli.md \
   && cp /opt/codacy-skills/skills/codacy-analysis-cli/references/* /home/node/.claude/commands/references/
@@ -68,4 +70,4 @@ RUN mkdir -p /home/node/.claude/commands/references \
 WORKDIR /workspace
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["pipeline.sh"]
+CMD ["local-pipeline.sh"]
