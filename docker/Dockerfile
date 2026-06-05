@@ -42,8 +42,10 @@ RUN npm install -g \
     @codacy/codacy-cloud-cli \
     @codacy/analysis-cli
 
-# Firewall init — node user gets sudo rights for this script only
 # Pre-bake skills — Claude loads via --plugin-dir, Gemini installs from local path
+# ADD'ing the master ref content makes Docker invalidate this layer whenever codacy-skills master moves,
+# so a fresh `docker build` always gets the latest skills without --no-cache.
+ADD https://api.github.com/repos/codacy/codacy-skills/git/refs/heads/master /tmp/codacy-skills-ref
 RUN git clone --depth 1 https://github.com/codacy/codacy-skills.git /opt/codacy-skills
 
 COPY docker/init-firewall.sh /usr/local/bin/init-firewall.sh
