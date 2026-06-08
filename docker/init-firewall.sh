@@ -1,4 +1,12 @@
 #!/bin/bash
+# Minimal egress allowlist for the container. Three categories only.
+#   - Claude         (api.anthropic.com, statsig.anthropic.com)
+#   - Gemini         (generativelanguage.googleapis.com, oauth2.googleapis.com)
+#   - Codacy API     (api.codacy.com, app.codacy.com)
+# Designed for the configure-codacy-cloud flow which makes no local analysis calls.
+# To test server-pipeline.sh locally (which needs git clone egress), set RUNNING_IN_K8S=true
+# to skip this firewall and rely on the developer's host firewall instead.
+
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -21,43 +29,22 @@ if [ -n "$DOCKER_DNS_RULES" ]; then
   echo "$DOCKER_DNS_RULES" | xargs -L 1 iptables -t nat
 fi
 
-# Protocol-level rules (set before the default-DROP policy)
+# Protocol-level rules
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -A INPUT  -p udp --sport 53 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 22 -j ACCEPT
-iptables -A INPUT  -p tcp --sport 22 -m state --state ESTABLISHED -j ACCEPT
 iptables -A INPUT  -i lo -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
 
 # Build the allowlist
 ipset create allowed-domains hash:net
 
-# GitHub IP ranges — covers api.github.com, github.com, raw content, AND ghcr.io (packages)
-# ghcr.io (Trivy vulnerability DB) lives under the packages CIDR block
-gh_ranges=$(curl -s https://api.github.com/meta)
-while read -r cidr; do
-  ipset add allowed-domains "$cidr" 2>/dev/null || true
-done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .packages)[]' | aggregate -q)
-
-# Resolve each domain to IPs at startup and add to the allowlist
 for domain in \
-  "registry.npmjs.org" \
   "api.anthropic.com" \
   "statsig.anthropic.com" \
-  "statsig.com" \
-  "sentry.io" \
-  "app.codacy.com" \
-  "api.codacy.com" \
   "generativelanguage.googleapis.com" \
   "oauth2.googleapis.com" \
-  "cveawg.mitre.org" \
-  "api.osv.dev" \
-  "pypi.org" \
-  "files.pythonhosted.org" \
-  "pkg-containers.githubusercontent.com" \
-  "bc-api.bridgecrew.io" \
-  "bc-api.prismacloud.io" \
-  "cdn.prismacloud.io"; do
+  "api.codacy.com" \
+  "app.codacy.com"; do
   for _ in 1 2 3 4 5; do
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" { print $5 }')
     while read -r ip; do
@@ -92,11 +79,10 @@ iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited
 
 # Sanity checks
 curl --connect-timeout 5 https://example.com >/dev/null 2>&1 && { echo "FIREWALL ERROR: example.com should be blocked"; exit 1; }
-curl --connect-timeout 5 https://api.github.com/zen >/dev/null 2>&1 || { echo "FIREWALL ERROR: api.github.com should be reachable"; exit 1; }
 curl --connect-timeout 5 https://api.anthropic.com >/dev/null 2>&1 || true  # 401 is fine, blocked is not
 curl --connect-timeout 5 https://app.codacy.com >/dev/null 2>&1 || { echo "FIREWALL ERROR: app.codacy.com should be reachable"; exit 1; }
 
-echo "Firewall initialized."
+echo "Firewall initialized (claude + gemini + codacy)."
 
 # Emit blocked outbound connections to stderr in real time.
 # /dev/kmsg must be mapped into the container: --device /dev/kmsg:/dev/kmsg
