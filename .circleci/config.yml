@@ -9,18 +9,19 @@ references:
     persist_to_workspace: true
     cmd: |
       IMAGE="codacy/autoconfig"
+      VERSION="$(cat .version)"
       DOCKER_SCOUT_VERSION=1.9.3
-      curl -L "https://github.com/docker/scout-cli/releases/download/v${DOCKER_SCOUT_VERSION}/docker-scout_${DOCKER_SCOUT_VERSION}_linux_amd64.tar.gz" -o /tmp/docker-scout.tar.gz
+      curl -fL "https://github.com/docker/scout-cli/releases/download/v${DOCKER_SCOUT_VERSION}/docker-scout_${DOCKER_SCOUT_VERSION}_linux_amd64.tar.gz" -o /tmp/docker-scout.tar.gz
       mkdir -p "$HOME/.docker/cli-plugins"
       tar -xvzf /tmp/docker-scout.tar.gz -C "$HOME/.docker/cli-plugins"
       chmod +x "$HOME/.docker/cli-plugins/docker-scout"
 
-      docker build --no-cache -f docker/Dockerfile -t "${IMAGE}:$(cat .version)" .
+      docker build --no-cache -f docker/Dockerfile -t "${IMAGE}:${VERSION}" .
 
       echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-      docker scout cves --only-fixed --only-severity high,critical --only-package-type deb --exit-code "${IMAGE}:$(cat .version)"
+      docker scout cves --only-fixed --only-severity high,critical --only-package-type deb --exit-code "${IMAGE}:${VERSION}"
 
-      docker save --output docker-image.tar "${IMAGE}:$(cat .version)"
+      docker save --output docker-image.tar "${IMAGE}:${VERSION}"
 
   publish_dockerhub: &publish_dockerhub
     context: CodacyDocker
