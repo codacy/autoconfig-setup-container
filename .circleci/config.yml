@@ -74,6 +74,10 @@ workflows:
           name: publish_dockerhub
           requires:
             - build_and_scan_docker
+          filters:
+            branches:
+              only:
+                - main
 
       - codacy/publish_docker:
           <<: *publish_ecr
@@ -81,6 +85,10 @@ workflows:
           aws_profile: integration
           requires:
             - publish_dockerhub
+          filters:
+            branches:
+              only:
+                - main
 
       - codacy/publish_docker:
           <<: *publish_ecr
