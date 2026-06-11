@@ -1,0 +1,125 @@
+version: 2.1
+
+orbs:
+  codacy: codacy/base@13.0.2
+
+references:
+  build_and_scan_docker: &build_and_scan_docker
+    context: CodacyDocker
+    persist_to_workspace: true
+    cmd: |
+      IMAGE="codacy/autoconfig"
+      VERSION="$(cat .version)"
+      DOCKER_SCOUT_VERSION=1.9.3
+      curl -fL "https://github.com/docker/scout-cli/releases/download/v${DOCKER_SCOUT_VERSION}/docker-scout_${DOCKER_SCOUT_VERSION}_linux_amd64.tar.gz" -o /tmp/docker-scout.tar.gz
+      mkdir -p "$HOME/.docker/cli-plugins"
+      tar -xvzf /tmp/docker-scout.tar.gz -C "$HOME/.docker/cli-plugins"
+      chmod +x "$HOME/.docker/cli-plugins/docker-scout"
+
+      docker build --no-cache -f docker/Dockerfile -t "${IMAGE}:${VERSION}" .
+
+      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+      docker scout cves --only-fixed --only-severity high,critical --only-package-type deb --exit-code "${IMAGE}:${VERSION}"
+
+      docker save --output docker-image.tar "${IMAGE}:${VERSION}"
+
+  publish_dockerhub: &publish_dockerhub
+    context: CodacyDocker
+    cmd: |
+      IMAGE="codacy/autoconfig"
+      VERSION="$(cat .version)"
+
+      docker load --input docker-image.tar
+      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+
+      docker push "${IMAGE}:${VERSION}"
+
+      if [[ "${CIRCLE_BRANCH}" == "main" ]]; then
+        docker tag "${IMAGE}:${VERSION}" "${IMAGE}:latest"
+        docker push "${IMAGE}:latest"
+      else
+        docker tag "${IMAGE}:${VERSION}" "${IMAGE}:dev"
+        docker push "${IMAGE}:dev"
+      fi
+
+  publish_ecr: &publish_ecr
+    context: CodacyAWS
+    ecr_login: true
+    cmd: |
+      IMAGE="codacy/autoconfig"
+      VERSION="$(cat .version)"
+
+      docker load --input docker-image.tar
+
+      aws ecr describe-repositories --repository-names "${IMAGE}" >/dev/null 2>&1 \
+        || aws ecr create-repository --repository-name "${IMAGE}" >/dev/null
+
+      docker tag "${IMAGE}:${VERSION}" "${ECR_URL}/${IMAGE}:${VERSION}"
+      docker push "${ECR_URL}/${IMAGE}:${VERSION}"
+
+workflows:
+  build-and-publish:
+    jobs:
+      - codacy/checkout_and_version:
+          release_branch: main
+
+      - codacy/shell:
+          <<: *build_and_scan_docker
+          name: build_and_scan_docker
+          requires:
+            - codacy/checkout_and_version
+
+      - codacy/publish_docker:
+          <<: *publish_dockerhub
+          name: publish_dockerhub
+          requires:
+            - build_and_scan_docker
+          filters:
+            branches:
+              only:
+                - main
+
+      - codacy/publish_docker:
+          <<: *publish_ecr
+          name: publish_ecr_integration
+          aws_profile: integration
+          requires:
+            - publish_dockerhub
+          filters:
+            branches:
+              only:
+                - main
+
+      - codacy/publish_docker:
+          <<: *publish_ecr
+          name: publish_ecr_staging
+          aws_profile: staging
+          requires:
+            - publish_dockerhub
+          filters:
+            branches:
+              only:
+                - main
+
+      - codacy/publish_docker:
+          <<: *publish_ecr
+          name: publish_ecr_production
+          aws_profile: production
+          requires:
+            - publish_dockerhub
+          filters:
+            branches:
+              only:
+                - main
+
+      - codacy/tag_version:
+          name: tag_version
+          context: CodacyAWS
+          requires:
+            - publish_ecr_integration
+            - publish_ecr_staging
+            - publish_ecr_production
+          filters:
+            branches:
+              only:
+                - main
