@@ -67,7 +67,9 @@ Distinct UIDs matter: a different unprivileged UID **cannot** read the other's `
    - Scrub the agent env: `unset CODACY_API_TOKEN GIT_TOKEN GEMINI_API_KEY`; set `ANTHROPIC_BASE_URL=http://127.0.0.1:<PORT>`, dummy `ANTHROPIC_AUTH_TOKEN`, and `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` per docs.
    - `exec` claude as `agent` (`runuser`/`setpriv`/`sudo -u`; pick one that passes the scrubbed env and a TTY for `-it` local runs), with `--permission-mode dontAsk`.
 
-2. **Anthropic auth proxy** (~40 lines, Node already in image): listens `127.0.0.1:<PORT>`, forwards to `https://api.anthropic.com`, **replaces** the auth header with the real key from its runner-owned env, ignores the dummy. Agent cannot read its env (distinct UID). Firewall allows proxy→Anthropic. *(Gemini path: scrub `GEMINI_API_KEY` and treat Gemini as not-hardened/document-out, or give it the same proxy — decided at plan time. Server mode is Claude-only.)*
+2. **Anthropic auth proxy** (~40 lines, Node already in image): listens `127.0.0.1:<PORT>`, forwards to `https://api.anthropic.com`, **replaces** the auth header with the real key from its runner-owned env, ignores the dummy. Agent cannot read its env (distinct UID). Firewall allows proxy→Anthropic.
+
+   **Gemini is dropped** (decided): not in use. Remove the Gemini branch from `local-pipeline.sh` (require `ANTHROPIC_API_KEY`), stop passing `GEMINI_API_KEY` in `docker-compose.yml` / `.env.example`, and skip the `gemini extensions install` step in `entrypoint.sh`. The image keeps the `gemini` CLI binary but the pipeline no longer invokes it. Revisit if Gemini support is reintroduced.
 
 3. **Two-user + sudo CLI wrappers (Dockerfile):** users `runner`(1001)/`agent`(1002) + shared group `codacy`. Real CLIs moved to `/opt/cli/`; `PATH` shims `exec sudo -n -u runner /opt/cli/<cli> "$@"`. Sudoers: `agent ALL=(runner) NOPASSWD: /opt/cli/codacy, /opt/cli/codacy-analysis`. Keep root NOPASSWD for `init-firewall.sh` (now run in setup). Credentials at `/home/runner/.codacy` (700). Tool-cache volume moves `/home/node/.codacy` → `/home/runner/.codacy`.
 
@@ -75,7 +77,7 @@ Distinct UIDs matter: a different unprivileged UID **cannot** read the other's `
 
 5. **Tool policy + managed settings:**
    - **Managed** `/etc/claude-code/managed-settings.json` (repo cannot widen): `allowManagedPermissionRulesOnly: true`, `disableBypassPermissionsMode: "disable"`, `failIfUnavailable: true`.
-   - Permissions: **remove** `WebFetch`, `Glob`, `Grep`; scope `Read`/`Write`/`Edit` to `/workspace/**`; add **deny** rules for secret paths (`/home/runner/**`, `/proc/*/environ`, `~/.codacy/**`). `Bash`: allow needed prefixes (`Bash(codacy:*)`, `Bash(codacy-analysis:*)`, `Bash(jq:*)`, `Bash(mkdir:*)`, `Bash(rm:*)`, `Bash(cd:*)`). Research confirms Claude matches each segment of compound commands independently (pipes/`&&`/redirects are split), but **arg-restriction allowlists are documented-fragile** — so the OS layer remains the boundary; if prefix matching breaks the skill in `dontAsk`, fall back to broader `Bash` knowing secrets are already unreadable.
+   - Permissions: **remove** `WebFetch`, `Glob`, `Grep`; scope `Read`/`Write`/`Edit` to `/workspace/**`; add **deny** rules for secret paths (`/home/runner/**`, `/proc/*/environ`, `~/.codacy/**`). `Bash`: **prefix-allowlist first** (decided) — `Bash(codacy:*)`, `Bash(codacy-analysis:*)`, `Bash(jq:*)`, `Bash(mkdir:*)`, `Bash(rm:*)`, `Bash(cd:*)`. Research confirms Claude matches each segment of compound commands independently (pipes/`&&`/redirects are split), but **arg-restriction allowlists are documented-fragile**. Run the e2e probe under `dontAsk` and watch for the skill being blocked on a legitimate command; if the prefix list proves unworkable, fall back to broader `Bash` — secrets are unreadable either way, so the OS layer remains the boundary. Log which commands the skill actually issues during testing to refine the list.
 
 6. **DNS hardening (in-scope):** route DNS through a local resolver (dnsmasq/unbound) answering only allowlisted domains; drop other outbound UDP 53. Closes CVE-2025-55284-class exfil and the semantic-transformation gap the IP allowlist cannot.
 
@@ -105,11 +107,10 @@ A throwaway Codacy repo already on Codacy with ≥1 finished analysis; a **repo-
 
 ## Risks / open items
 
-- **Bash allowlist vs compound commands** — may fall back to broad `Bash` + OS isolation (acceptable; OS is the boundary).
+- **Bash allowlist vs compound commands** — prefix-allowlist first; fall back to broad `Bash` + OS isolation if it blocks the skill (acceptable; OS is the boundary).
 - **`codacy login` token-input method** — must avoid argv; confirm env/stdin or write creds file directly.
 - **Drop-priv mechanism** — `runuser`/`setpriv`/`sudo -u`; must pass scrubbed env + TTY for local `-it`.
 - **Built-in sandbox in Docker is weakened** — deliberately not relied on for the network boundary; iptables + two-user are.
-- **Gemini path** — hardened or documented-out (plan-time decision).
 - **k8s parity** — server mode skips the in-container firewall; two-user + proxy are not firewall-dependent and still hold; confirm NetworkPolicy allows proxy→Anthropic and consider DNS policy at cluster level.
 
 ## Rollout
