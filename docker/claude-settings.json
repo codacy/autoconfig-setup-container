@@ -1,13 +1,27 @@
 {
   "permissions": {
     "allow": [
-      "Bash(*)",
-      "Read",
-      "Write",
-      "Edit",
-      "Glob",
-      "Grep",
-      "WebFetch(*)"
+      "Bash(codacy:*)",
+      "Bash(codacy-analysis:*)",
+      "Bash(jq:*)",
+      "Bash(mkdir:*)",
+      "Bash(rm:*)",
+      "Bash(cd:*)",
+      "Read(/workspace/**)",
+      "Write(/workspace/**)",
+      "Edit(/workspace/**)"
+    ],
+    "deny": [
+      "Read(/home/runner/**)",
+      "Read(//proc/**)",
+      "Read(/etc/sudoers.d/**)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(ssh:*)",
+      "Bash(dig:*)",
+      "Bash(nslookup:*)",
+      "Bash(host:*)",
+      "Bash(ping:*)"
     ]
   }
 }

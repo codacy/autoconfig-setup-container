@@ -9,6 +9,7 @@ cd /workspace
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "==> Running configure-codacy-cloud with Claude..."
   claude -p "/configure-codacy-cloud" \
+    --permission-mode dontAsk \
     --model haiku \
     --output-format stream-json \
     --verbose \

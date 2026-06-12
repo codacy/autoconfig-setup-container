@@ -100,10 +100,22 @@ probe_direct_anthropic() {
   if [[ "$code" == "401" || "$code" == "403" ]]; then pass "direct anthropic: dummy key rejected ($code)"; else fail "direct anthropic: unexpected status $code"; fi
 }
 
+probe_tool_policy() {
+  # Static checks on the baked settings: no WebFetch/Glob/Grep allow, secret-path
+  # deny rules present, managed settings lock present.
+  local out; out="$(run_as_agent 'cat /home/agent/.claude/settings.json; echo "===MANAGED==="; cat /etc/claude-code/managed-settings.json')"
+  if echo "$out" | grep -q '"deny"' \
+     && echo "$out" | grep -q '/home/runner' \
+     && ! echo "$out" | grep -qE '"WebFetch|"Glob|"Grep' \
+     && echo "$out" | grep -q 'disableBypassPermissionsMode'; then
+    pass "tool policy: tightened settings + managed lock present"
+  else fail "tool policy: settings not tightened ($out)"; fi
+}
+
 # ---- dispatch --------------------------------------------------------------
 
 FAILED=0
-ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak probe_proc_env probe_direct_anthropic)
+ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak probe_proc_env probe_direct_anthropic probe_tool_policy)
 
 if [[ $# -ge 1 ]]; then
   "probe_$1"

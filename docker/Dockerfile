@@ -82,15 +82,20 @@ RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/l
 # Image starts as root; entrypoint performs setup then drops to `agent`.
 USER root
 
-# Install skills into ~/.claude/commands/ — claude reads these natively without --plugin-dir,
-# which avoids the v2.1.123 regression where --plugin-dir silently fails in stream-json mode
-COPY --chown=node:node docker/claude-settings.json /home/node/.claude/settings.json
-RUN mkdir -p /home/node/.claude/commands/references \
-  && cp /opt/codacy-skills/skills/configure-codacy/SKILL.md /home/node/.claude/commands/configure-codacy.md \
-  && cp /opt/codacy-skills/skills/configure-codacy-cloud/SKILL.md /home/node/.claude/commands/configure-codacy-cloud.md \
-  && cp /opt/codacy-skills/skills/codacy-analysis-cli/SKILL.md /home/node/.claude/commands/codacy-analysis-cli.md \
-  && cp /opt/codacy-skills/skills/codacy-cloud-cli/SKILL.md /home/node/.claude/commands/codacy-cloud-cli.md \
-  && cp /opt/codacy-skills/skills/codacy-analysis-cli/references/* /home/node/.claude/commands/references/
+# Install skills into the agent's ~/.claude/commands/ — claude reads these natively
+# without --plugin-dir, which avoids the v2.1.123 regression where --plugin-dir
+# silently fails in stream-json mode. Managed settings lock the policy so the
+# repo/agent cannot widen it.
+COPY --chown=agent:codacy docker/claude-settings.json /home/agent/.claude/settings.json
+COPY docker/managed-settings.json /etc/claude-code/managed-settings.json
+RUN mkdir -p /home/agent/.claude/commands/references \
+  && cp /opt/codacy-skills/skills/configure-codacy/SKILL.md /home/agent/.claude/commands/configure-codacy.md \
+  && cp /opt/codacy-skills/skills/configure-codacy-cloud/SKILL.md /home/agent/.claude/commands/configure-codacy-cloud.md \
+  && cp /opt/codacy-skills/skills/codacy-analysis-cli/SKILL.md /home/agent/.claude/commands/codacy-analysis-cli.md \
+  && cp /opt/codacy-skills/skills/codacy-cloud-cli/SKILL.md /home/agent/.claude/commands/codacy-cloud-cli.md \
+  && cp /opt/codacy-skills/skills/codacy-analysis-cli/references/* /home/agent/.claude/commands/references/ \
+  && chown -R agent:codacy /home/agent/.claude \
+  && chmod 0644 /etc/claude-code/managed-settings.json
 
 WORKDIR /workspace
 
