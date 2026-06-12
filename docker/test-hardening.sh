@@ -66,10 +66,27 @@ probe_creds_unreadable() {
   else fail "creds: unexpected access ($out)"; fi
 }
 
+probe_env_scrubbed() {
+  # As the agent, the secret env vars must be absent; ANTHROPIC_BASE_URL must
+  # point at the local proxy and the codacy dummy token must not have leaked in.
+  local out; out="$(run_as_agent 'printenv | grep -E "^(CODACY_API_TOKEN|GIT_TOKEN|GEMINI_API_KEY)=" ; echo "BASE=$ANTHROPIC_BASE_URL"; echo "KEY=$ANTHROPIC_API_KEY$ANTHROPIC_AUTH_TOKEN"')"
+  if ! echo "$out" | grep -qE '^(CODACY_API_TOKEN|GIT_TOKEN|GEMINI_API_KEY)=' \
+     && echo "$out" | grep -q 'BASE=http://127.0.0.1' \
+     && ! echo "$out" | grep -q 'dummy-codacy'; then
+    pass "env scrubbed: no secrets in agent env, BASE_URL set"
+  else fail "env scrubbed: leak or missing BASE_URL ($out)"; fi
+}
+
+probe_no_cmdline_leak() {
+  # No running process may expose a token in its argv (/proc/*/cmdline).
+  local out; out="$(run_as_agent 'cat /proc/*/cmdline 2>/dev/null | tr "\0" " "')"
+  if ! echo "$out" | grep -q 'dummy-codacy'; then pass "cmdline: no token in any argv"; else fail "cmdline: token leaked in argv"; fi
+}
+
 # ---- dispatch --------------------------------------------------------------
 
 FAILED=0
-ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable)
+ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak)
 
 if [[ $# -ge 1 ]]; then
   "probe_$1"
