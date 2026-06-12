@@ -68,6 +68,7 @@ RUN cp /usr/local/bin/codacy /usr/local/bin/codacy-analysis \
 ADD https://api.github.com/repos/codacy/codacy-skills/git/refs/heads/master /tmp/codacy-skills-ref
 RUN git clone --depth 1 https://github.com/codacy/codacy-skills.git /opt/codacy-skills
 
+COPY docker/anthropic-proxy.js /usr/local/bin/anthropic-proxy.js
 COPY docker/init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh

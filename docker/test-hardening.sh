@@ -83,10 +83,27 @@ probe_no_cmdline_leak() {
   if ! echo "$out" | grep -q 'dummy-codacy'; then pass "cmdline: no token in any argv"; else fail "cmdline: token leaked in argv"; fi
 }
 
+probe_proc_env() {
+  # The agent must not be able to read the runner/proxy process environment
+  # (where the real key lives). Different UID => /proc/<pid>/environ is denied.
+  local out
+  out="$(run_as_agent 'for p in $(ps -u runner -o pid= 2>/dev/null); do cat /proc/$p/environ 2>&1; done | tr "\0" "\n"')"
+  if ! echo "$out" | grep -q 'sk-dummy-anthropic'; then pass "proc env: agent cannot read runner process env"; else fail "proc env: real key readable via /proc"; fi
+}
+
+probe_direct_anthropic() {
+  # The dummy token the agent holds must not authenticate directly to Anthropic.
+  # 401/403 = good (request reached Anthropic and was rejected).
+  local code
+  code="$(run_as_agent 'curl -s -o /dev/null -w "%{http_code}" -H "x-api-key: $ANTHROPIC_AUTH_TOKEN" -H "anthropic-version: 2023-06-01" https://api.anthropic.com/v1/models | tail -1')"
+  code="$(echo "$code" | tail -1)"
+  if [[ "$code" == "401" || "$code" == "403" ]]; then pass "direct anthropic: dummy key rejected ($code)"; else fail "direct anthropic: unexpected status $code"; fi
+}
+
 # ---- dispatch --------------------------------------------------------------
 
 FAILED=0
-ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak)
+ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak probe_proc_env probe_direct_anthropic)
 
 if [[ $# -ge 1 ]]; then
   "probe_$1"
