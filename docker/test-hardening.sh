@@ -157,6 +157,37 @@ probe_dns_allowlist() {
   else fail "dns allowlist: codacy='$codacy_ip' evil='$evil_ip' ($out)"; fi
 }
 
+probe_cli() {
+  # With a real token, the agent can drive the Codacy CLI through the shim
+  # (proving runner-side credentials work) WITHOUT the token being in its env.
+  : "${REAL_CODACY_TOKEN:?set REAL_CODACY_TOKEN}"
+  local out
+  out="$(docker run --rm "${CAPS[@]}" -e RUNNING_IN_K8S=true \
+    -e CODACY_API_TOKEN="$REAL_CODACY_TOKEN" -e ANTHROPIC_API_KEY=sk-dummy \
+    "$IMAGE" bash -c 'echo "ENVTOKEN=[$CODACY_API_TOKEN]"; codacy --help >/dev/null 2>&1 && echo cli-ok' 2>&1)"
+  if echo "$out" | grep -q 'cli-ok' && ! echo "$out" | grep -q "$REAL_CODACY_TOKEN"; then
+    pass "cli: agent drives codacy via shim with no token in env"
+  else fail "cli: ($out)"; fi
+}
+
+probe_e2e() {
+  # Full local pipeline against a real throwaway Codacy repo. Requires:
+  #   REAL_CODACY_TOKEN, REAL_ANTHROPIC_KEY, and E2E_REPO = a git checkout whose
+  #   origin remote maps to a repo already on Codacy with a finished analysis.
+  : "${REAL_CODACY_TOKEN:?set REAL_CODACY_TOKEN}"; : "${REAL_ANTHROPIC_KEY:?set REAL_ANTHROPIC_KEY}"; : "${E2E_REPO:?set E2E_REPO}"
+  local out
+  out="$(docker run --rm "${CAPS[@]}" \
+    -e CODACY_API_TOKEN="$REAL_CODACY_TOKEN" -e ANTHROPIC_API_KEY="$REAL_ANTHROPIC_KEY" \
+    -v "$E2E_REPO":/workspace "$IMAGE" local-pipeline.sh 2>&1)"
+  echo "$out" | tail -20
+  local summary
+  summary="$(docker run --rm -e RUNNING_IN_K8S=true -v "$E2E_REPO":/workspace "$IMAGE" \
+    bash -c 'cat /workspace/.codacy/configure-codacy-cloud-summary.json 2>/dev/null')"
+  if [[ -n "$summary" ]] && ! echo "$summary" | grep -qE "$REAL_CODACY_TOKEN|$REAL_ANTHROPIC_KEY|sk-ant-"; then
+    pass "e2e: pipeline completed, summary clean of secrets"
+  else fail "e2e: missing summary or secret present"; fi
+}
+
 # ---- dispatch --------------------------------------------------------------
 
 FAILED=0
