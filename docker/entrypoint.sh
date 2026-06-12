@@ -61,7 +61,6 @@ exec runuser -u agent -- env -i \
   TERM="${TERM:-xterm}" \
   ANTHROPIC_BASE_URL="http://127.0.0.1:${PROXY_PORT}" \
   ANTHROPIC_AUTH_TOKEN="sk-dummy-not-a-real-key" \
-  CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 \
   RUNNING_IN_K8S="${RUNNING_IN_K8S:-}" \
   RESULT_UPLOAD_URL="${RESULT_UPLOAD_URL:-}" \
   CODACY_PROVIDER="${CODACY_PROVIDER:-}" \
