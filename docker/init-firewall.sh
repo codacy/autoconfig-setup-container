@@ -2,7 +2,7 @@
 # Minimal egress allowlist for the container. Three categories only.
 #   - Claude         (api.anthropic.com, statsig.anthropic.com)
 #   - Gemini         (generativelanguage.googleapis.com, oauth2.googleapis.com)
-#   - Codacy API     (api.codacy.com, app.codacy.com)
+#   - Codacy API     (api.codacy.com, app.codacy.com, app.dev.codacy.org, app.staging.codacy.org)
 # Designed for the configure-codacy-cloud flow which makes no local analysis calls.
 # To test server-pipeline.sh locally (which needs git clone egress), set RUNNING_IN_K8S=true
 # to skip this firewall and rely on the developer's host firewall instead.
@@ -44,7 +44,9 @@ for domain in \
   "generativelanguage.googleapis.com" \
   "oauth2.googleapis.com" \
   "api.codacy.com" \
-  "app.codacy.com"; do
+  "app.codacy.com" \
+  "app.dev.codacy.org" \
+  "app.staging.codacy.org"; do
   for _ in 1 2 3 4 5; do
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" { print $5 }')
     while read -r ip; do

@@ -906,7 +906,7 @@ with:
 DNS_UPSTREAM="$(grep -m1 '^nameserver' /etc/resolv.conf | awk '{print $2}')"
 dnsmasq \
   --no-resolv --no-hosts --listen-address=127.0.0.1 --bind-interfaces \
-  $(for d in api.anthropic.com statsig.anthropic.com api.codacy.com app.codacy.com; do echo --server=/$d/${DNS_UPSTREAM:-8.8.8.8}; done) \
+  $(for d in api.anthropic.com statsig.anthropic.com api.codacy.com app.codacy.com app.dev.codacy.org app.staging.codacy.org; do echo --server=/$d/${DNS_UPSTREAM:-8.8.8.8}; done) \
   --address=/#/0.0.0.0
 # Point the system resolver at dnsmasq.
 echo "nameserver 127.0.0.1" > /etc/resolv.conf
