@@ -24,16 +24,20 @@ if [ -n "${CODACY_API_TOKEN:-}" ]; then
 fi
 
 # 4. Start the Anthropic auth proxy AS RUNNER (the real key lives only here).
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  runuser -u runner -- env ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
-    ANTHROPIC_PROXY_PORT="${PROXY_PORT}" \
-    node /usr/local/bin/anthropic-proxy.js &
-  # Give the proxy a moment to bind before the agent starts.
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    runuser -u agent -- bash -c "exec 3<>/dev/tcp/127.0.0.1/${PROXY_PORT}" 2>/dev/null && break
-    sleep 0.3
-  done
+#    ANTHROPIC_API_KEY is required: the agent reaches Anthropic only through this
+#    proxy, and Gemini is not supported.
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "ERROR: ANTHROPIC_API_KEY is not set." >&2
+  exit 1
 fi
+runuser -u runner -- env ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+  ANTHROPIC_PROXY_PORT="${PROXY_PORT}" \
+  node /usr/local/bin/anthropic-proxy.js &
+# Give the proxy a moment to bind before the agent starts.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  runuser -u agent -- bash -c "exec 3<>/dev/tcp/127.0.0.1/${PROXY_PORT}" 2>/dev/null && break
+  sleep 0.3
+done
 
 # 4b. Shared scratch for the dual config mechanism: runner-run CLIs write here
 #     and the agent edits the files. setgid + group `codacy` + umask 002 keep
