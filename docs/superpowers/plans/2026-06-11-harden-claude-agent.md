@@ -41,7 +41,7 @@
 **Modified files:**
 - `docker/Dockerfile` — two users + shared group, relocate real CLIs to `/opt/cli`, install shims, sudoers, credentials path, copy proxy + managed settings, `USER root` (entrypoint drops priv).
 - `docker/entrypoint.sh` — pre-auth Codacy as `runner` (no token in argv), start proxy as `runner`, scrub env, drop to `agent`.
-- `docker/local-pipeline.sh` — require `ANTHROPIC_API_KEY`, drop the Gemini branch, run `claude` with `--permission-mode dontAsk`.
+- `docker/local-pipeline.sh` — require `ANTHROPIC_API_KEY`, drop the Gemini branch, run `claude` with `--permission-mode dontAsk --model haiku`.
 - `docker/server-pipeline.sh` — same claude invocation; sanitize the summary before upload.
 - `docker/init-firewall.sh` — allow proxy egress to Anthropic; route DNS through a local resolver and drop other outbound 53.
 - `docker/claude-settings.json` — remove `WebFetch`/`Glob`/`Grep`, scope `Read`/`Write`/`Edit` to `/workspace/**`, add secret-path deny rules, Bash prefix allowlist.
@@ -647,7 +647,7 @@ RUN mkdir -p /home/agent/.claude/commands/references \
 ```
 > This block currently runs after `USER node`. Since the image now ends as `USER root` (Task 2), move this whole `COPY`/`RUN` group to before the final `USER root` line, or leave it before `WORKDIR /workspace` — either way it executes as root, which is fine because of the explicit `chown`.
 
-- [ ] **Step 5: Add `--permission-mode dontAsk` to both pipelines**
+- [ ] **Step 5: Add `--permission-mode dontAsk` and `--model haiku` to both pipelines**
 
 In `docker/local-pipeline.sh` and `docker/server-pipeline.sh`, the claude invocation is:
 ```bash
@@ -656,14 +656,16 @@ In `docker/local-pipeline.sh` and `docker/server-pipeline.sh`, the claude invoca
     --verbose \
     --include-partial-messages \
 ```
-Add the permission mode flag as the second line in each:
+Add the permission-mode and model flags as the next lines in each:
 ```bash
   claude -p "/configure-codacy-cloud" \
     --permission-mode dontAsk \
+    --model haiku \
     --output-format stream-json \
     --verbose \
     --include-partial-messages \
 ```
+> `--model haiku` runs the cheapest tier (Haiku 4.5). The alias `haiku` auto-tracks the latest Haiku; pin to `claude-haiku-4-5-20251001` instead if you need a fixed model across rebuilds. Model is a request parameter, so it passes through the auth proxy unchanged. Watch the e2e probe (Task 11): if Haiku struggles with the skill's tool-use/JSON reasoning, bump to `--model sonnet`.
 
 - [ ] **Step 6: Build and run the probe — expect PASS**
 
@@ -963,6 +965,7 @@ fi
 echo "==> Running configure-codacy-cloud with Claude..."
 claude -p "/configure-codacy-cloud" \
   --permission-mode dontAsk \
+  --model haiku \
   --output-format stream-json \
   --verbose \
   --include-partial-messages \
@@ -1091,7 +1094,7 @@ The agent runs least-privilege. Two OS users:
 - **`runner` (1001)** — holds the Codacy credentials (`/home/runner/.codacy`, mode 700) and runs the Anthropic auth proxy (`anthropic-proxy.js`) that holds the real `ANTHROPIC_API_KEY`.
 - **`agent` (1002)** — runs `claude -p`. Its environment contains **no real secret**: `ANTHROPIC_BASE_URL` points at the local proxy with a dummy token; `CODACY_API_TOKEN`/`GIT_TOKEN`/`GEMINI_API_KEY` are unset. It reaches the Codacy CLIs only through `/usr/local/bin/codacy{,-analysis}` shims that `sudo -u runner` the real binaries in `/opt/cli`.
 
-The entrypoint runs as root: firewall → Codacy login as runner (token via env, never argv) → start proxy as runner → scrub env → `exec runuser -u agent`. Network egress is an iptables allowlist plus a dnsmasq DNS allowlist (only Anthropic + Codacy resolve). Claude runs with `--permission-mode dontAsk` and a managed-settings lock.
+The entrypoint runs as root: firewall → Codacy login as runner (token via env, never argv) → start proxy as runner → scrub env → `exec runuser -u agent`. Network egress is an iptables allowlist plus a dnsmasq DNS allowlist (only Anthropic + Codacy resolve). Claude runs on the Haiku model with `--permission-mode dontAsk` and a managed-settings lock.
 
 Verify with `./docker/test-hardening.sh` (12 adversarial probes). Probes 1–10 need no live keys; the `e2e` probe needs a throwaway Codacy repo + tokens.
 ```
