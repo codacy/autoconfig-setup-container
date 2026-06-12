@@ -64,6 +64,7 @@ mkdir -p "$(dirname "${SUMMARY_PATH}")"
 
 echo "==> Running configure-codacy-cloud"
 claude -p "/configure-codacy-cloud" \
+  --model haiku \
   --output-format stream-json \
   --verbose \
   --include-partial-messages \
