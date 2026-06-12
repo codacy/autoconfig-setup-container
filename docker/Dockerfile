@@ -73,7 +73,8 @@ COPY docker/init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh \
+COPY docker/summary-sanitize.sh /usr/local/bin/summary-sanitize.sh
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/summary-sanitize.sh \
   # The agent may run ONLY the two real CLIs, and only as runner.
   && printf 'agent ALL=(runner) NOPASSWD: /usr/local/bin/codacy-real, /usr/local/bin/codacy-analysis-real\n' \
      > /etc/sudoers.d/agent-cli \

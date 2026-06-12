@@ -125,10 +125,22 @@ probe_codacy_roundtrip() {
   else fail "codacy roundtrip: ($out)"; fi
 }
 
+probe_summary_sanitize() {
+  # The sanitizer must redact secret-shaped strings from a summary before upload.
+  local out
+  out="$(docker run --rm "${DUMMY_ENV[@]}" -e RUNNING_IN_K8S=true "$IMAGE" bash -c '
+    printf "%s\n" "{\"keyImprovements\":[\"leak sk-ant-api03-AAAABBBBCCCCDDDDEEEE and codacy tok 1234567890abcdef1234567890abcdef\"]}" > /tmp/s.json
+    /usr/local/bin/summary-sanitize.sh /tmp/s.json
+    cat /tmp/s.json' 2>&1)"
+  if ! echo "$out" | grep -qE 'sk-ant-api03-AAAABBBB|1234567890abcdef1234567890abcdef' && echo "$out" | grep -q 'REDACTED'; then
+    pass "summary sanitize: secrets redacted"
+  else fail "summary sanitize: ($out)"; fi
+}
+
 # ---- dispatch --------------------------------------------------------------
 
 FAILED=0
-ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak probe_proc_env probe_direct_anthropic probe_tool_policy probe_codacy_roundtrip)
+ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak probe_proc_env probe_direct_anthropic probe_tool_policy probe_codacy_roundtrip probe_summary_sanitize)
 
 if [[ $# -ge 1 ]]; then
   "probe_$1"
