@@ -1052,7 +1052,7 @@ probe_e2e() {
 ```bash
 export REAL_CODACY_TOKEN=...        # Codacy Account API Token (account-scoped; use a throwaway account)
 export REAL_ANTHROPIC_KEY=...       # dev/low-limit key
-export E2E_REPO=/path/to/throwaway-checkout   # already on Codacy, >=1 finished analysis
+export E2E_REPO=/path/to/throwaway-checkout   # MUST be a git checkout with an `origin` remote that maps to a repo already on Codacy with >=1 finished analysis. The skill auto-detects provider/org/repo from the git remote; a plain folder or a non-Codacy repo makes it stop with "Could not detect repository from git remote".
 ./docker/test-hardening.sh cli
 ./docker/test-hardening.sh e2e
 ```

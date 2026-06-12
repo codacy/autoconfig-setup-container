@@ -105,7 +105,7 @@ Distinct UIDs matter: a different unprivileged UID **cannot** read the other's `
 12. **E2E smoke (real keys)** — `local-pipeline.sh` against a throwaway Codacy repo completes, writes a summary, and the summary contains **no** secret.
 
 ### Fixtures the user provides
-A throwaway Codacy repo already on Codacy with ≥1 finished analysis; a `CODACY_API_TOKEN` (an **Account API Token** — see note below; use a throwaway account for testing); an `ANTHROPIC_API_KEY` (dev/low-limit fine); for server-mode tests a `GIT_TOKEN` + provider/org/repo and a local PUT sink for `RESULT_UPLOAD_URL`. Passed via `--env-file`/`-e` at test time, never committed.
+A throwaway repo that is a **git checkout with an `origin` remote mapping to a repo already on Codacy with ≥1 finished analysis** (the skill auto-detects provider/org/repo from the git remote — a plain folder or non-Codacy repo makes it stop with "Could not detect repository from git remote"); a `CODACY_API_TOKEN` (an **Account API Token** — see note below; use a throwaway account for testing); an `ANTHROPIC_API_KEY` (dev/low-limit fine); for server-mode tests a `GIT_TOKEN` + provider/org/repo and a local PUT sink for `RESULT_UPLOAD_URL`. Passed via `--env-file`/`-e` at test time, never committed.
 
 ## Risks / open items
 
