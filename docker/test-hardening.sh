@@ -112,10 +112,23 @@ probe_tool_policy() {
   else fail "tool policy: settings not tightened ($out)"; fi
 }
 
+probe_codacy_roundtrip() {
+  # /workspace/.codacy must be group-codacy, setgid, group-writable, so files
+  # created by either user are editable by the other.
+  local out; out="$(run_as_agent '
+    stat -c "%G %A" /workspace/.codacy
+    touch /workspace/.codacy/agent-made.json && echo "agent-write-ok"
+    stat -c "%G" /workspace/.codacy/agent-made.json
+  ')"
+  if echo "$out" | grep -q 'codacy' && echo "$out" | grep -q 'agent-write-ok' && echo "$out" | grep -qE 'rws|rwS'; then
+    pass "codacy roundtrip: shared setgid .codacy dir"
+  else fail "codacy roundtrip: ($out)"; fi
+}
+
 # ---- dispatch --------------------------------------------------------------
 
 FAILED=0
-ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak probe_proc_env probe_direct_anthropic probe_tool_policy)
+ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak probe_proc_env probe_direct_anthropic probe_tool_policy probe_codacy_roundtrip)
 
 if [[ $# -ge 1 ]]; then
   "probe_$1"

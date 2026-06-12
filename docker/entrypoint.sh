@@ -35,6 +35,14 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   done
 fi
 
+# 4b. Shared scratch for the dual config mechanism: runner-run CLIs write here
+#     and the agent edits the files. setgid + group `codacy` + umask 002 keep
+#     both able to read/write each other's files.
+mkdir -p /workspace/.codacy
+chown runner:codacy /workspace/.codacy 2>/dev/null || true
+chmod 2775 /workspace/.codacy 2>/dev/null || true
+umask 002
+
 # 5. Drop to the agent with a clean environment: only non-secret vars survive.
 #    `env -i` clears everything; we re-add just what the agent needs. The real
 #    Anthropic key is NOT here — claude talks to the local proxy with a dummy.
