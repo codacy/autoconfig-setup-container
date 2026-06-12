@@ -57,10 +57,19 @@ probe_shim() {
   if echo "$out" | grep -q 'sudo -n -H -u runner'; then pass "shim: codacy is a sudo->runner shim"; else fail "shim: codacy is not the shim ($out)"; fi
 }
 
+probe_creds_unreadable() {
+  # As the agent, the runner-owned credentials file must not be readable, and
+  # no copy may exist in the agent's home.
+  local out; out="$(run_as_agent 'cat /home/runner/.codacy/credentials 2>&1; echo "---"; ls -la /home/agent/.codacy 2>&1')"
+  if echo "$out" | grep -qiE 'permission denied|no such file' && ! echo "$out" | grep -qiE 'token|begin|sk-'; then
+    pass "creds: agent cannot read runner credentials"
+  else fail "creds: unexpected access ($out)"; fi
+}
+
 # ---- dispatch --------------------------------------------------------------
 
 FAILED=0
-ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim)
+ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable)
 
 if [[ $# -ge 1 ]]; then
   "probe_$1"

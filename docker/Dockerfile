@@ -56,7 +56,11 @@ RUN groupadd -g 1003 codacy \
   && mv /usr/local/bin/codacy-analysis /usr/local/bin/codacy-analysis-real
 COPY docker/codacy-shim.sh /usr/local/bin/codacy
 RUN cp /usr/local/bin/codacy /usr/local/bin/codacy-analysis \
-  && chmod +x /usr/local/bin/codacy /usr/local/bin/codacy-analysis
+  && chmod +x /usr/local/bin/codacy /usr/local/bin/codacy-analysis \
+  # Codacy credentials live in runner's home, unreadable by agent.
+  && mkdir -p /home/runner/.codacy \
+  && chown -R runner:codacy /home/runner/.codacy \
+  && chmod 700 /home/runner/.codacy
 
 # Pre-bake skills — Claude loads via --plugin-dir, Gemini installs from local path
 # ADD'ing the master ref content makes Docker invalidate this layer whenever codacy-skills master moves,
