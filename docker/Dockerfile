@@ -42,6 +42,22 @@ RUN npm install -g \
     @codacy/codacy-cloud-cli \
     @codacy/analysis-cli
 
+# --- Privilege separation ------------------------------------------------
+# runner (1001): owns credentials + the Anthropic auth proxy; runs the real CLIs.
+# agent  (1002): runs claude; holds no secret. Shared group `codacy` lets both
+# read/write /workspace/.codacy via setgid (Task 7).
+RUN groupadd -g 1003 codacy \
+  && useradd -m -u 1001 -g codacy runner \
+  && useradd -m -u 1002 -g codacy agent \
+  # Relocate the real Codacy CLIs to <name>-real in the SAME dir so their
+  # relative npm symlinks stay valid; install shims at the original names that
+  # elevate to runner.
+  && mv /usr/local/bin/codacy          /usr/local/bin/codacy-real \
+  && mv /usr/local/bin/codacy-analysis /usr/local/bin/codacy-analysis-real
+COPY docker/codacy-shim.sh /usr/local/bin/codacy
+RUN cp /usr/local/bin/codacy /usr/local/bin/codacy-analysis \
+  && chmod +x /usr/local/bin/codacy /usr/local/bin/codacy-analysis
+
 # Pre-bake skills — Claude loads via --plugin-dir, Gemini installs from local path
 # ADD'ing the master ref content makes Docker invalidate this layer whenever codacy-skills master moves,
 # so a fresh `docker build` always gets the latest skills without --no-cache.
@@ -53,11 +69,13 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh \
-  && printf 'node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh\nnode ALL=(root) NOPASSWD: /bin/chown -R node\\:node /home/node/.codacy\n' \
-     > /etc/sudoers.d/node-firewall \
-  && chmod 0440 /etc/sudoers.d/node-firewall
+  # The agent may run ONLY the two real CLIs, and only as runner.
+  && printf 'agent ALL=(runner) NOPASSWD: /usr/local/bin/codacy-real, /usr/local/bin/codacy-analysis-real\n' \
+     > /etc/sudoers.d/agent-cli \
+  && chmod 0440 /etc/sudoers.d/agent-cli
 
-USER node
+# Image starts as root; entrypoint performs setup then drops to `agent`.
+USER root
 
 # Install skills into ~/.claude/commands/ — claude reads these natively without --plugin-dir,
 # which avoids the v2.1.123 regression where --plugin-dir silently fails in stream-json mode

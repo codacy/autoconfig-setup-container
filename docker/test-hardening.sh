@@ -42,10 +42,25 @@ probe_smoke() {
   if echo "$out" | grep -qx agent; then pass "smoke: command runs as agent"; else fail "smoke: expected agent, got '$(echo "$out" | tail -1)'"; fi
 }
 
+probe_distinct_uids() {
+  # agent and runner must be distinct, non-root UIDs.
+  local out; out="$(run_as_agent 'id -u agent; id -u runner')"
+  local a r; a="$(echo "$out" | grep -E '^[0-9]+$' | sed -n 1p)"; r="$(echo "$out" | grep -E '^[0-9]+$' | sed -n 2p)"
+  if [[ "$a" == "1002" && "$r" == "1001" ]]; then
+    pass "distinct uids: agent=$a runner=$r"
+  else fail "distinct uids: got agent='$a' runner='$r'"; fi
+}
+
+probe_shim() {
+  # The codacy binary on PATH is the shim that elevates to runner.
+  local out; out="$(run_as_agent 'command -v codacy; cat "$(command -v codacy)"')"
+  if echo "$out" | grep -q 'sudo -n -H -u runner'; then pass "shim: codacy is a sudo->runner shim"; else fail "shim: codacy is not the shim ($out)"; fi
+}
+
 # ---- dispatch --------------------------------------------------------------
 
 FAILED=0
-ALL_PROBES=(probe_smoke)
+ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim)
 
 if [[ $# -ge 1 ]]; then
   "probe_$1"
