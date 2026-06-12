@@ -56,8 +56,9 @@ RUN groupadd -g 1003 codacy \
   && mv /usr/local/bin/codacy          /usr/local/bin/codacy-real \
   && mv /usr/local/bin/codacy-analysis /usr/local/bin/codacy-analysis-real
 COPY docker/codacy-shim.sh /usr/local/bin/codacy
+COPY docker/codacy-run.sh /usr/local/bin/codacy-run
 RUN cp /usr/local/bin/codacy /usr/local/bin/codacy-analysis \
-  && chmod +x /usr/local/bin/codacy /usr/local/bin/codacy-analysis \
+  && chmod +x /usr/local/bin/codacy /usr/local/bin/codacy-analysis /usr/local/bin/codacy-run \
   # Codacy credentials live in runner's home, unreadable by agent.
   && mkdir -p /home/runner/.codacy \
   && chown -R runner:codacy /home/runner/.codacy \
@@ -76,8 +77,8 @@ COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
 COPY docker/summary-sanitize.sh /usr/local/bin/summary-sanitize.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/summary-sanitize.sh \
-  # The agent may run ONLY the two real CLIs, and only as runner.
-  && printf 'agent ALL=(runner) NOPASSWD: /usr/local/bin/codacy-real, /usr/local/bin/codacy-analysis-real\n' \
+  # The agent may run ONLY the runner-side CLI launcher, and only as runner.
+  && printf 'agent ALL=(runner) NOPASSWD: /usr/local/bin/codacy-run\n' \
      > /etc/sudoers.d/agent-cli \
   && chmod 0440 /etc/sudoers.d/agent-cli
 

@@ -13,6 +13,7 @@
     ],
     "deny": [
       "Read(/home/runner/**)",
+      "Read(//run/codacy/**)",
       "Read(//proc/**)",
       "Read(/etc/sudoers.d/**)",
       "Bash(curl:*)",

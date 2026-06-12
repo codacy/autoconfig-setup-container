@@ -58,11 +58,11 @@ probe_shim() {
 }
 
 probe_creds_unreadable() {
-  # As the agent, the runner-owned credentials file must not be readable, and
-  # no copy may exist in the agent's home.
-  local out; out="$(run_as_agent 'cat /home/runner/.codacy/credentials 2>&1; echo "---"; ls -la /home/agent/.codacy 2>&1')"
-  if echo "$out" | grep -qiE 'permission denied|no such file' && ! echo "$out" | grep -qiE 'token|begin|sk-'; then
-    pass "creds: agent cannot read runner credentials"
+  # As the agent, neither the runner credentials dir nor the staged token file
+  # may be readable. The dummy token value must not appear in the output.
+  local out; out="$(run_as_agent 'cat /run/codacy/codacy.env 2>&1; echo "---"; cat /home/runner/.codacy/credentials 2>&1; echo "---"; ls -la /home/agent/.codacy 2>&1')"
+  if echo "$out" | grep -qiE 'permission denied|no such file' && ! echo "$out" | grep -q 'dummy-codacy'; then
+    pass "creds: agent cannot read runner token/credentials"
   else fail "creds: unexpected access ($out)"; fi
 }
 

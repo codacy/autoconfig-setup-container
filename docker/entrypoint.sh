@@ -14,13 +14,17 @@ fi
 # 2. Fix ownership of the (root-mounted) tool-cache volume for runner.
 chown -R runner:codacy /home/runner/.codacy 2>/dev/null || true
 
-# 3. Pre-authenticate Codacy AS RUNNER, without putting the token in argv
-#    (/proc/<pid>/cmdline is world-readable; argv secrets = CWE-214). The token
-#    is passed via runner's environment to `codacy login`, never as an argument.
+# 3. Stage the Codacy token for the runner-side CLI launcher. The Codacy CLI
+#    reads CODACY_API_TOKEN from its environment at runtime, so no persisted
+#    login is needed. We write it to a runner-only file (600) OUTSIDE the
+#    persisted tool-cache volume, never to argv (cmdline is world-readable;
+#    argv secrets = CWE-214). The agent (uid 1002) cannot read it.
 if [ -n "${CODACY_API_TOKEN:-}" ]; then
-  runuser -u runner -- env CODACY_API_TOKEN="${CODACY_API_TOKEN}" \
-    /usr/local/bin/codacy-real login >/dev/null 2>&1 \
-    || echo "entrypoint: codacy login failed (continuing; skill will verify access)" >&2
+  mkdir -p /run/codacy
+  printf 'CODACY_API_TOKEN=%s\n' "${CODACY_API_TOKEN}" > /run/codacy/codacy.env
+  chown -R runner:codacy /run/codacy
+  chmod 700 /run/codacy
+  chmod 600 /run/codacy/codacy.env
 fi
 
 # 4. Start the Anthropic auth proxy AS RUNNER (the real key lives only here).
