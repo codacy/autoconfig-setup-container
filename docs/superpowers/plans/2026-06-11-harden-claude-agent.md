@@ -1047,7 +1047,7 @@ probe_e2e() {
 - [ ] **Step 2: Run the e2e probe with the fixtures**
 
 ```bash
-export REAL_CODACY_TOKEN=...        # repo-scoped token for the throwaway repo
+export REAL_CODACY_TOKEN=...        # Codacy Account API Token (account-scoped; use a throwaway account)
 export REAL_ANTHROPIC_KEY=...       # dev/low-limit key
 export E2E_REPO=/path/to/throwaway-checkout   # already on Codacy, >=1 finished analysis
 ./docker/test-hardening.sh cli

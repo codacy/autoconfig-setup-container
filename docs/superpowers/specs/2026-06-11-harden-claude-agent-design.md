@@ -11,6 +11,8 @@ The container runs `claude -p "/configure-codacy-cloud"` against `/workspace`, w
 
 Today the agent has `Bash(*)` + broad tools and **all secrets in its environment** (`CODACY_API_TOKEN`, `ANTHROPIC_API_KEY`, optional `GEMINI_API_KEY`, server-mode `GIT_TOKEN`). A hijacked agent reads them trivially (`env`, `cat ~/.codacy/credentials`) and exfiltrates through channels the egress allowlist does **not** stop: writing a secret into an allowed SaaS field and reading it back, the summary-JSON upload (server mode, firewall skipped in k8s), or **DNS** (UDP 53). Highest-value loss: `ANTHROPIC_API_KEY` and server-mode `GIT_TOKEN`.
 
+**`CODACY_API_TOKEN` is an account-scoped token.** It is a Codacy **Account API Token** (My Account → Access Management → Account API Tokens), consumed by the Cloud CLI from the env var or persisted via `codacy login` to `~/.codacy/credentials`. It grants the account's full access across **every org/repo it can reach** — there is no repo-scoping for it, and the cloud-config flow (`codacy repo`/`tools`/`patterns`/`reanalyze`/account-wide `issues`) needs that account scope (Codacy's narrower project/repository tokens cannot drive cloud config). So the blast radius of this secret cannot be shrunk by scoping — which makes **keeping it unreadable** the only available control, not an optional one.
+
 ## Why this is real (validated by research)
 
 - **Lethal trifecta** (Willison, [link](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/)): private data + untrusted content + exfil channel ⇒ structurally vulnerable. We cannot remove untrusted content (it is a code tool), so we **must** remove readable secrets.
@@ -103,7 +105,7 @@ Distinct UIDs matter: a different unprivileged UID **cannot** read the other's `
 12. **E2E smoke (real keys)** — `local-pipeline.sh` against a throwaway Codacy repo completes, writes a summary, and the summary contains **no** secret.
 
 ### Fixtures the user provides
-A throwaway Codacy repo already on Codacy with ≥1 finished analysis; a **repo-scoped** `CODACY_API_TOKEN`; an `ANTHROPIC_API_KEY` (dev/low-limit fine); for server-mode tests a `GIT_TOKEN` + provider/org/repo and a local PUT sink for `RESULT_UPLOAD_URL`. Passed via `--env-file`/`-e` at test time, never committed.
+A throwaway Codacy repo already on Codacy with ≥1 finished analysis; a `CODACY_API_TOKEN` (an **Account API Token** — see note below; use a throwaway account for testing); an `ANTHROPIC_API_KEY` (dev/low-limit fine); for server-mode tests a `GIT_TOKEN` + provider/org/repo and a local PUT sink for `RESULT_UPLOAD_URL`. Passed via `--env-file`/`-e` at test time, never committed.
 
 ## Risks / open items
 
@@ -111,6 +113,7 @@ A throwaway Codacy repo already on Codacy with ≥1 finished analysis; a **repo-
 - **`codacy login` token-input method** — must avoid argv; confirm env/stdin or write creds file directly.
 - **Drop-priv mechanism** — `runuser`/`setpriv`/`sudo -u`; must pass scrubbed env + TTY for local `-it`.
 - **Built-in sandbox in Docker is weakened** — deliberately not relied on for the network boundary; iptables + two-user are.
+- **`CODACY_API_TOKEN` cannot be scope-reduced** — it is an account token and the flow needs account scope, so the secret is inherently powerful; OS-level unreadability is the only mitigation. **Follow-up:** ask Codacy whether a narrower token (or a future scoped token) can drive the cloud-config operations — if so, scope reduction becomes a real additional control.
 - **k8s parity** — server mode skips the in-container firewall; two-user + proxy are not firewall-dependent and still hold; confirm NetworkPolicy allows proxy→Anthropic and consider DNS policy at cluster level.
 
 ## Rollout
