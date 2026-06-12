@@ -9,6 +9,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     ipset \
     iproute2 \
     dnsutils \
+    dnsmasq \
     aggregate \
     # Utilities
     curl \

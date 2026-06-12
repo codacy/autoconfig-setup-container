@@ -137,10 +137,30 @@ probe_summary_sanitize() {
   else fail "summary sanitize: ($out)"; fi
 }
 
+probe_dns_allowlist() {
+  # Firewall ENABLED for this probe (no RUNNING_IN_K8S). An allowlisted domain
+  # resolves to a real IP; a non-allowlisted domain resolves to 0.0.0.0
+  # (dnsmasq answers locally — no query reaches an external nameserver), so DNS
+  # tunneling is dead even though the lookup "succeeds". Also confirms the
+  # firewall initialized without a sanity-check error.
+  local out
+  out="$(docker run --rm "${CAPS[@]}" "${DUMMY_ENV[@]}" "$IMAGE" bash -c '
+    echo "CODACY_IP=$(getent hosts app.codacy.com | awk "{print \$1}" | head -1)"
+    echo "EVIL_IP=$(getent hosts evil-not-allowed.example | awk "{print \$1}" | head -1)"
+  ' 2>&1)"
+  local codacy_ip evil_ip
+  codacy_ip="$(echo "$out" | sed -n 's/^CODACY_IP=//p')"
+  evil_ip="$(echo "$out" | sed -n 's/^EVIL_IP=//p')"
+  if echo "$out" | grep -qi 'FIREWALL ERROR'; then fail "dns allowlist: firewall sanity failed ($out)"; return; fi
+  if [[ -n "$codacy_ip" && "$codacy_ip" != "0.0.0.0" && "$evil_ip" == "0.0.0.0" ]]; then
+    pass "dns allowlist: codacy=$codacy_ip, evil=$evil_ip (sinkholed)"
+  else fail "dns allowlist: codacy='$codacy_ip' evil='$evil_ip' ($out)"; fi
+}
+
 # ---- dispatch --------------------------------------------------------------
 
 FAILED=0
-ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak probe_proc_env probe_direct_anthropic probe_tool_policy probe_codacy_roundtrip probe_summary_sanitize)
+ALL_PROBES=(probe_smoke probe_distinct_uids probe_shim probe_creds_unreadable probe_env_scrubbed probe_no_cmdline_leak probe_proc_env probe_direct_anthropic probe_tool_policy probe_codacy_roundtrip probe_summary_sanitize probe_dns_allowlist)
 
 if [[ $# -ge 1 ]]; then
   "probe_$1"

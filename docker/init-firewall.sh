@@ -29,9 +29,8 @@ if [ -n "$DOCKER_DNS_RULES" ]; then
   echo "$DOCKER_DNS_RULES" | xargs -L 1 iptables -t nat
 fi
 
-# Protocol-level rules
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-iptables -A INPUT  -p udp --sport 53 -j ACCEPT
+# Protocol-level rules. NOTE: no blanket outbound UDP 53 — DNS is locked to a
+# local resolver below (loopback only), closing DNS-tunnel exfiltration.
 iptables -A INPUT  -i lo -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
 
@@ -60,6 +59,31 @@ HOST_IP=$(ip route | grep default | cut -d" " -f3)
 HOST_NETWORK=$(echo "$HOST_IP" | sed "s/\.[0-9]*$/.0\/24/")
 iptables -A INPUT  -s "$HOST_NETWORK" -j ACCEPT
 iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
+
+# DNS allowlist: run a local dnsmasq that forwards ONLY the allowlisted domains
+# to an upstream resolver and answers everything else with 0.0.0.0 (unroutable),
+# so a prompt-injected agent cannot tunnel data out via DNS subdomain lookups
+# (CVE-2025-55284 class). dnsmasq's --ipset adds each resolved IP to the
+# allowed-domains set on the fly, so the matching HTTPS connection is permitted
+# regardless of CDN IP rotation. Only root (dnsmasq) may reach the upstream
+# resolver on port 53 — the agent (uid 1002) cannot, so its sole DNS path is
+# this allowlisting resolver on 127.0.0.1.
+DNS_RESOLVER="${DNS_ALLOWLIST_UPSTREAM:-1.1.1.1}"
+iptables -A OUTPUT -p udp -d "$DNS_RESOLVER" --dport 53 -m owner --uid-owner 0 -j ACCEPT
+iptables -A OUTPUT -p tcp -d "$DNS_RESOLVER" --dport 53 -m owner --uid-owner 0 -j ACCEPT
+dnsmasq --user=root \
+  --no-resolv --no-hosts --listen-address=127.0.0.1 --bind-interfaces \
+  --server=/api.anthropic.com/"$DNS_RESOLVER" \
+  --server=/statsig.anthropic.com/"$DNS_RESOLVER" \
+  --server=/generativelanguage.googleapis.com/"$DNS_RESOLVER" \
+  --server=/oauth2.googleapis.com/"$DNS_RESOLVER" \
+  --server=/api.codacy.com/"$DNS_RESOLVER" \
+  --server=/app.codacy.com/"$DNS_RESOLVER" \
+  --server=/app.dev.codacy.org/"$DNS_RESOLVER" \
+  --server=/app.staging.codacy.org/"$DNS_RESOLVER" \
+  --ipset=/api.anthropic.com/statsig.anthropic.com/generativelanguage.googleapis.com/oauth2.googleapis.com/api.codacy.com/app.codacy.com/app.dev.codacy.org/app.staging.codacy.org/allowed-domains \
+  --address=/#/0.0.0.0
+echo "nameserver 127.0.0.1" > /etc/resolv.conf
 
 # Default-deny all chains
 iptables -P INPUT   DROP
