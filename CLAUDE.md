@@ -49,7 +49,7 @@ The agent runs least-privilege so a prompt injection from the untrusted `/worksp
 
 The entrypoint runs as root: firewall → Codacy login as runner (token via env, never argv) → start proxy as runner → scrub env → `exec runuser -u agent`. Network egress is an iptables IP allowlist **plus** a dnsmasq DNS allowlist (only Anthropic + Codacy resolve; everything else is sinkholed to `0.0.0.0`, and only root may reach the upstream resolver). Claude runs on Haiku with `--permission-mode dontAsk` and a managed-settings lock (`/etc/claude-code/managed-settings.json`).
 
-Verify with `./docker/test-hardening.sh` (adversarial probes). Probes 1–12 need no live keys; the opt-in `cli` / `e2e` probes need a throwaway Codacy account token + a Codacy-tracked git checkout. Design: `docs/superpowers/specs/2026-06-11-harden-claude-agent-design.md`; overview: `docs/hardening-overview.md`.
+Verify with `./docker/test-hardening.sh` (adversarial probes). Probes 1–12 need no live keys; the opt-in `cli` / `e2e` probes need a throwaway Codacy account token + a Codacy-tracked git checkout. Overview: `docs/hardening-overview.md`.
 
 ## Container Architecture
 

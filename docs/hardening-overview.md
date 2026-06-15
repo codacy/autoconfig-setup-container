@@ -253,4 +253,4 @@ This contains the blast radius; it does not make prompt injection *impossible*. 
 
 ---
 
-*Full design and rationale: `docs/superpowers/specs/2026-06-11-harden-claude-agent-design.md`. Step-by-step build: `docs/superpowers/plans/2026-06-11-harden-claude-agent.md`.*
+*This is the high-level overview. The hardening is verified by `./docker/test-hardening.sh` (adversarial probes) — see `CLAUDE.md` § "Security model (OD-78)".*
