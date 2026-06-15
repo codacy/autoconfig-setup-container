@@ -62,7 +62,11 @@ RUN cp /usr/local/bin/codacy /usr/local/bin/codacy-analysis \
   # Codacy credentials live in runner's home, unreadable by agent.
   && mkdir -p /home/runner/.codacy \
   && chown -R runner:codacy /home/runner/.codacy \
-  && chmod 700 /home/runner/.codacy
+  && chmod 700 /home/runner/.codacy \
+  # /workspace is owned by `agent` (so server mode can clone into it) but the
+  # Codacy CLI runs as `runner` and auto-detects the repo via git — git's
+  # dubious-ownership guard would otherwise reject the agent-owned checkout.
+  && git config --system --add safe.directory /workspace
 
 # Pre-bake skills — Claude loads via --plugin-dir, Gemini installs from local path
 # ADD'ing the master ref content makes Docker invalidate this layer whenever codacy-skills master moves,
