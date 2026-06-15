@@ -113,15 +113,17 @@ probe_tool_policy() {
 }
 
 probe_codacy_roundtrip() {
-  # /workspace/.codacy must be group-codacy, setgid, group-writable, so files
-  # created by either user are editable by the other.
+  # /workspace is agent-writable and setgid group `codacy`, so the agent can
+  # create .codacy (server mode clones into /workspace; the skill makes .codacy)
+  # and files inherit group `codacy` — the runner-run CLIs (also group codacy)
+  # can then read/write them.
   local out; out="$(run_as_agent '
-    stat -c "%G %A" /workspace/.codacy
-    touch /workspace/.codacy/agent-made.json && echo "agent-write-ok"
-    stat -c "%G" /workspace/.codacy/agent-made.json
+    stat -c "ws:%A" /workspace
+    mkdir -p /workspace/.codacy && touch /workspace/.codacy/agent-made.json && echo "agent-write-ok"
+    stat -c "grp:%G" /workspace/.codacy/agent-made.json
   ')"
-  if echo "$out" | grep -q 'codacy' && echo "$out" | grep -q 'agent-write-ok' && echo "$out" | grep -qE 'rws|rwS'; then
-    pass "codacy roundtrip: shared setgid .codacy dir"
+  if echo "$out" | grep -q 'agent-write-ok' && echo "$out" | grep -q 'grp:codacy' && echo "$out" | grep -qE 'ws:.*rws|ws:.*rwS'; then
+    pass "codacy roundtrip: /workspace setgid group codacy, agent-writable"
   else fail "codacy roundtrip: ($out)"; fi
 }
 

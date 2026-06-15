@@ -43,12 +43,15 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 0.3
 done
 
-# 4b. Shared scratch for the dual config mechanism: runner-run CLIs write here
-#     and the agent edits the files. setgid + group `codacy` + umask 002 keep
-#     both able to read/write each other's files.
-mkdir -p /workspace/.codacy
-chown runner:codacy /workspace/.codacy 2>/dev/null || true
-chmod 2775 /workspace/.codacy 2>/dev/null || true
+# 4b. Make /workspace writable by the agent and group-shared. Server mode clones
+#     into /workspace (as the agent), and the dual config mechanism needs the
+#     runner-run CLIs and the agent to read/write each other's files under
+#     .codacy. Both users share primary group `codacy`; setgid makes everything
+#     created here inherit that group, and umask 002 keeps it group-writable.
+#     Do NOT pre-create .codacy — server mode requires an empty /workspace to
+#     clone into; the skill creates .codacy itself.
+chown agent:codacy /workspace 2>/dev/null || true
+chmod 2775 /workspace 2>/dev/null || true
 umask 002
 
 # 5. Drop to the agent with a clean environment: only non-secret vars survive.

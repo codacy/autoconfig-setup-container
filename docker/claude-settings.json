@@ -8,9 +8,13 @@
     ],
     "deny": [
       "Read(/home/runner/**)",
+      "Read(//home/runner/**)",
+      "Read(/run/codacy/**)",
       "Read(//run/codacy/**)",
+      "Read(/proc/**)",
       "Read(//proc/**)",
       "Read(/etc/sudoers.d/**)",
+      "Read(//etc/sudoers.d/**)",
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(ssh:*)",
