@@ -39,8 +39,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 RUN npm install -g \
     @anthropic-ai/claude-code \
     @google/gemini-cli \
-    @codacy/codacy-cloud-cli@1.3.1 \
-    @codacy/analysis-cli@0.10.1
+    @codacy/codacy-cloud-cli \
+    @codacy/analysis-cli
 
 # Pre-bake skills — Claude loads via --plugin-dir, Gemini installs from local path
 # ADD'ing the master ref content makes Docker invalidate this layer whenever codacy-skills master moves,
