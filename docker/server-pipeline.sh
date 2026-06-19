@@ -63,6 +63,7 @@ cd "${WORKSPACE}"
 mkdir -p "$(dirname "${SUMMARY_PATH}")"
 
 CLAUDE_STREAM_FILE=$(mktemp)
+RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 echo "==> Running configure-codacy-cloud"
 claude -p "/configure-codacy-cloud" \
@@ -73,17 +74,22 @@ claude -p "/configure-codacy-cloud" \
   | tee "${CLAUDE_STREAM_FILE}" \
   | jq --unbuffered -rj 'select(.type == "stream_event" and .event.delta.type? == "text_delta") | .event.delta.text'
 SKILL_EXIT=${PIPESTATUS[0]}
+RUN_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo
 
 # Extract run metadata from the captured stream.
 # model lives on assistant message events (.message.model), not on the result event.
-RUN_META=$(jq -rsc '
+RUN_META=$(jq -rsc \
+  --arg startedAt "${RUN_STARTED_AT}" \
+  --arg finishedAt "${RUN_FINISHED_AT}" '
   . as $events |
   ($events | map(select(.type == "assistant")) | first | .message.model // "unknown") as $model |
   ($events | map(select(.type == "result")) | last) as $result |
   $result | {
     llm: "anthropic",
     model: $model,
+    startedAt: $startedAt,
+    finishedAt: $finishedAt,
     tokensIn: (.usage.input_tokens // 0),
     tokensOut: (.usage.output_tokens // 0),
     durationMs: (.duration_ms // 0),
