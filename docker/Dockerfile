@@ -39,7 +39,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 RUN npm install -g \
     @anthropic-ai/claude-code \
     @google/gemini-cli \
-    @codacy/codacy-cloud-cli@1.2.1 \
+    @codacy/codacy-cloud-cli@1.3.1 \
     @codacy/analysis-cli@0.10.1
 
 # Pre-bake skills — Claude loads via --plugin-dir, Gemini installs from local path
