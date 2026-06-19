@@ -1,81 +1,91 @@
 # codacy/autoconfig
 
-Set `SOURCE_PATH` in `.env` (or export it), then:
+## Running locally
 
-```bash
-docker compose run --rm codacy-ai
+**1. Create a `.env` file** in this directory:
+
+```
+CODACY_API_TOKEN=<your-codacy-api-token>
+ANTHROPIC_API_KEY=<your-anthropic-api-key>
+SOURCE_PATH=/absolute/path/to/your/repo
 ```
 
-Required env vars: `CODACY_API_TOKEN`, and `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` (or both).
+`GEMINI_API_KEY` is optional — set it instead of (or alongside) `ANTHROPIC_API_KEY` to use Gemini.
 
-The repository at `SOURCE_PATH` must already be on Codacy Cloud with at least one finished analysis. The container tunes
-the cloud configuration via Cloud reanalysis — it does not run local analysis, and it does not import not-yet-on-Codacy
-repositories.
+The repository at `SOURCE_PATH` must already be on Codacy Cloud with at least one finished analysis. The
+container tunes the cloud configuration via Cloud reanalysis — it does not run local analysis, and it does
+not import not-yet-on-Codacy repositories.
 
-Or from any folder, without the compose file:
-
-```bash
-docker run --rm -it \
-  --cap-add=NET_ADMIN --cap-add=NET_RAW \
-  --device /dev/kmsg:/dev/kmsg \
-  -v codacy-tool-cache:/home/node/.codacy \
-  -v $(pwd):/workspace \
-  -e CODACY_API_TOKEN -e ANTHROPIC_API_KEY -e GEMINI_API_KEY \
-  codacy/autoconfig
-```
-
-Or with an explicit env file:
-
-```bash
-docker run --rm -it \
-  --cap-add=NET_ADMIN --cap-add=NET_RAW \
-  --device /dev/kmsg:/dev/kmsg \
-  -v codacy-tool-cache:/home/node/.codacy \
-  -v $(pwd):/workspace \
-  --env-file ./../.env \
-  codacy/autoconfig
-```
-
-| Flag                                      | Purpose                                                         |
-|-------------------------------------------|-----------------------------------------------------------------|
-| `--rm`                                    | Delete the container on exit                                    |
-| `-it`                                     | Interactive terminal                                            |
-| `--cap-add=NET_ADMIN --cap-add=NET_RAW`   | Required to enforce the outbound firewall inside the container  |
-| `--device /dev/kmsg:/dev/kmsg`            | Kernel device needed by the firewall block-log stream           |
-| `-v codacy-tool-cache:/home/node/.codacy` | Persistent volume so downloaded tools survive between runs      |
-| `-v $(pwd):/workspace`                    | Mounts your current folder as `/workspace`                      |
-| `-e ...`                                  | Passes API tokens from your host environment into the container |
-| `--env-file /path/to/.env`                | Alternative to `-e` flags — loads vars from a file              |
-
-To rebuild the image:
+**2. Build the image** (first time, or after any script change):
 
 ```bash
 docker compose build
 ```
 
+**3. Run:**
+
+```bash
+docker compose run --rm codacy-ai
+```
+
+Docker Compose loads `.env` automatically — no shell exports needed. The result lands at:
+
+```
+$SOURCE_PATH/.codacy/configure-codacy-cloud-summary.json
+```
+
+### Overriding the model
+
+The default model is `claude-sonnet-4-6`. To use a different one, set `CLAUDE_MODEL` in `.env` or inline:
+
+```bash
+CLAUDE_MODEL=claude-opus-4-8 docker compose run --rm codacy-ai
+```
+
+### Running without the compose file
+
+```bash
+docker run --rm -it \
+  --cap-add=NET_ADMIN --cap-add=NET_RAW \
+  --device /dev/kmsg:/dev/kmsg \
+  -v codacy-tool-cache:/home/node/.codacy \
+  -v /path/to/your/repo:/workspace \
+  --env-file .env \
+  codacy/autoconfig local-pipeline.sh
+```
+
+| Flag                                      | Purpose                                                        |
+|-------------------------------------------|----------------------------------------------------------------|
+| `--cap-add=NET_ADMIN --cap-add=NET_RAW`   | Required to enforce the outbound firewall inside the container |
+| `--device /dev/kmsg:/dev/kmsg`            | Kernel device needed by the firewall block-log stream          |
+| `-v codacy-tool-cache:/home/node/.codacy` | Persistent volume so downloaded tools survive between runs     |
+| `-v /path/to/repo:/workspace`             | Mounts the repository as `/workspace`                          |
+| `--env-file .env`                         | Loads all variables from the `.env` file                       |
+
 ## Two pipelines, local and server
 
 The image ships two entrypoint scripts:
 
-- `local-pipeline.sh` (default). For developers running the container against a mounted source folder. Used by
-  `docker compose` and the `docker run` examples above. Invokes `/configure-codacy-cloud` against `/workspace`.
-- `server-pipeline.sh`. For the Active Analysis Manager (AAM) in production. Clones the repository via `GIT_TOKEN`,
-  invokes `/configure-codacy-cloud`, and uploads a JSONL summary to a presigned S3 URL. The clone URL is built per
-  provider (`CODACY_PROVIDER` of `gh`/`ghe` for GitHub, `gl`/`gle` for GitLab, `bb` for Bitbucket).
+- `local-pipeline.sh` — for developers running the container against a mounted source folder. Used by
+  `docker compose` and the `docker run` example above. Invokes `/configure-codacy-cloud` against `/workspace`.
+- `server-pipeline.sh` — for the Active Analysis Manager (AAM) in production. Clones the repository via
+  `GIT_TOKEN`, invokes `/configure-codacy-cloud`, and uploads a JSON summary to a presigned S3 URL. The
+  clone URL is built per provider (`CODACY_PROVIDER` of `gh`/`ghe` for GitHub, `gl`/`gle` for GitLab,
+  `bb` for Bitbucket).
 
-Both scripts run the same skill. The skill tunes a repository's Codacy Cloud configuration via Cloud reanalysis and
-never runs local static analysis tools — that's why the container's egress allowlist is narrow (Claude, Gemini, Codacy).
+Both scripts run the same skill, produce the same summary format, and capture the same run metadata
+(`llm`, `model`, `tokensIn`, `tokensOut`, `durationMs`, `costUsd`, `sessionId`).
 
-To test `server-pipeline.sh` locally, override the entrypoint and provide the additional env vars. Note that the
-local firewall does not allow git provider hosts, so set `RUNNING_IN_K8S=true` to skip it for this test:
+### Testing server-pipeline.sh locally
+
+The local firewall does not allow git provider hosts, so set `RUNNING_IN_K8S=true` to skip it:
 
 ```bash
 docker run --rm -it \
   -v codacy-tool-cache:/home/node/.codacy \
+  --env-file .env \
   -e RUNNING_IN_K8S=true \
-  -e CODACY_API_TOKEN \
-  -e ANTHROPIC_API_KEY \
-  -e GIT_TOKEN \
+  -e GIT_TOKEN=<token> \
   -e CODACY_PROVIDER=gh \
   -e CODACY_ORG_NAME=your-org \
   -e CODACY_REPO_NAME=your-repo \
@@ -86,7 +96,7 @@ docker run --rm -it \
 
 `httpbin.org/put` accepts any PUT and is useful for smoke-testing the upload step.
 
-To capture the summary on your host instead of sending it to httpbin, run a tiny HTTP sink in another terminal:
+To capture the summary on your host instead, run a tiny HTTP sink in another terminal:
 
 ```bash
 python3 -c "
@@ -94,22 +104,23 @@ import http.server
 class H(http.server.BaseHTTPRequestHandler):
     def do_PUT(self):
         n = int(self.headers.get('Content-Length', 0))
-        open('summary.received.jsonl', 'wb').write(self.rfile.read(n))
+        open('summary.json', 'wb').write(self.rfile.read(n))
         self.send_response(200); self.end_headers()
 http.server.HTTPServer(('0.0.0.0', 8080), H).serve_forever()
 "
 ```
 
-Then point the container at it with `RESULT_UPLOAD_URL=http://host.docker.internal:8080/upload`.
+Then set `RESULT_UPLOAD_URL=http://host.docker.internal:8080/upload`.
 
-Required env vars for the server pipeline: `CODACY_API_TOKEN`, `ANTHROPIC_API_KEY`, `GIT_TOKEN`, `CODACY_PROVIDER`,
-`CODACY_ORG_NAME`, `CODACY_REPO_NAME`, `RESULT_UPLOAD_URL`. The script fails fast if any are missing.
+Required env vars for the server pipeline: `CODACY_API_TOKEN`, `ANTHROPIC_API_KEY`, `GIT_TOKEN`,
+`CODACY_PROVIDER`, `CODACY_ORG_NAME`, `CODACY_REPO_NAME`, `RESULT_UPLOAD_URL`. The script fails fast
+if any are missing.
 
 ## What's inside
 
 - `codacy` — Codacy Cloud CLI
 - `codacy-analysis` — Codacy Analysis CLI (used by the skill only for config-file operations)
 - `claude` / `gemini` — AI assistants
-- Java 21, Python 3.12, Ruby, Go 1.26, shellcheck
-- Outbound firewall — allowlist for Claude, Gemini, and Codacy only. In production (k8s) the firewall is skipped and
-  egress is enforced by NetworkPolicy at the cluster level instead.
+- Java, Python 3, Ruby, Go 1.26, shellcheck
+- Outbound firewall — allowlist for Claude, Gemini, and Codacy only. In production (k8s) the firewall
+  is skipped and egress is enforced by NetworkPolicy at the cluster level instead.
