@@ -6,7 +6,7 @@ Set `SOURCE_PATH` in `.env` (or export it), then:
 docker compose run --rm codacy-ai
 ```
 
-Required env vars: `CODACY_API_TOKEN`, and `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` (or both).
+Required env vars: `CODACY_API_TOKEN` and `ANTHROPIC_API_KEY`.
 
 The repository at `SOURCE_PATH` must already be on Codacy Cloud with at least one finished analysis. The container tunes
 the cloud configuration via Cloud reanalysis — it does not run local analysis, and it does not import not-yet-on-Codacy
@@ -18,9 +18,9 @@ Or from any folder, without the compose file:
 docker run --rm -it \
   --cap-add=NET_ADMIN --cap-add=NET_RAW \
   --device /dev/kmsg:/dev/kmsg \
-  -v codacy-tool-cache:/home/node/.codacy \
+  -v codacy-tool-cache:/home/runner/.codacy \
   -v $(pwd):/workspace \
-  -e CODACY_API_TOKEN -e ANTHROPIC_API_KEY -e GEMINI_API_KEY \
+  -e CODACY_API_TOKEN -e ANTHROPIC_API_KEY \
   codacy/autoconfig
 ```
 
@@ -30,7 +30,7 @@ Or with an explicit env file:
 docker run --rm -it \
   --cap-add=NET_ADMIN --cap-add=NET_RAW \
   --device /dev/kmsg:/dev/kmsg \
-  -v codacy-tool-cache:/home/node/.codacy \
+  -v codacy-tool-cache:/home/runner/.codacy \
   -v $(pwd):/workspace \
   --env-file ./../.env \
   codacy/autoconfig
@@ -42,7 +42,7 @@ docker run --rm -it \
 | `-it`                                     | Interactive terminal                                            |
 | `--cap-add=NET_ADMIN --cap-add=NET_RAW`   | Required to enforce the outbound firewall inside the container  |
 | `--device /dev/kmsg:/dev/kmsg`            | Kernel device needed by the firewall block-log stream           |
-| `-v codacy-tool-cache:/home/node/.codacy` | Persistent volume so downloaded tools survive between runs      |
+| `-v codacy-tool-cache:/home/runner/.codacy` | Persistent volume so downloaded tools survive between runs      |
 | `-v $(pwd):/workspace`                    | Mounts your current folder as `/workspace`                      |
 | `-e ...`                                  | Passes API tokens from your host environment into the container |
 | `--env-file /path/to/.env`                | Alternative to `-e` flags — loads vars from a file              |
@@ -64,14 +64,14 @@ The image ships two entrypoint scripts:
   provider (`CODACY_PROVIDER` of `gh`/`ghe` for GitHub, `gl`/`gle` for GitLab, `bb` for Bitbucket).
 
 Both scripts run the same skill. The skill tunes a repository's Codacy Cloud configuration via Cloud reanalysis and
-never runs local static analysis tools — that's why the container's egress allowlist is narrow (Claude, Gemini, Codacy).
+never runs local static analysis tools — that's why the container's egress allowlist is narrow (Claude + Codacy).
 
 To test `server-pipeline.sh` locally, override the entrypoint and provide the additional env vars. Note that the
 local firewall does not allow git provider hosts, so set `RUNNING_IN_K8S=true` to skip it for this test:
 
 ```bash
 docker run --rm -it \
-  -v codacy-tool-cache:/home/node/.codacy \
+  -v codacy-tool-cache:/home/runner/.codacy \
   -e RUNNING_IN_K8S=true \
   -e CODACY_API_TOKEN \
   -e ANTHROPIC_API_KEY \
@@ -109,7 +109,10 @@ Required env vars for the server pipeline: `CODACY_API_TOKEN`, `ANTHROPIC_API_KE
 
 - `codacy` — Codacy Cloud CLI
 - `codacy-analysis` — Codacy Analysis CLI (used by the skill only for config-file operations)
-- `claude` / `gemini` — AI assistants
-- Java 21, Python 3.12, Ruby, Go 1.26, shellcheck
-- Outbound firewall — allowlist for Claude, Gemini, and Codacy only. In production (k8s) the firewall is skipped and
-  egress is enforced by NetworkPolicy at the cluster level instead.
+- `claude` — AI assistant (runs on Haiku, `--permission-mode dontAsk`). `gemini` is installed but no longer used.
+- Java, Python 3, Ruby, Go 1.26, shellcheck
+- Outbound firewall — IP allowlist plus a DNS allowlist (Claude + Codacy hosts, incl. `app.dev`/`app.staging.codacy.org`);
+  non-allowlisted DNS is sinkholed. In production (k8s) the firewall is skipped and egress is enforced by NetworkPolicy.
+- **Least-privilege agent (OD-78):** two OS users — `runner` holds the secrets (Codacy credentials + an Anthropic auth
+  proxy), `agent` runs Claude with no readable secret and reaches the Codacy CLIs only through `sudo` shims. So a
+  prompt-injected agent has nothing to exfiltrate. See `docs/hardening-overview.md`; verify with `./docker/test-hardening.sh`.

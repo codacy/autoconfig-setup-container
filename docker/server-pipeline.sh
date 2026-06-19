@@ -60,10 +60,18 @@ if ! git clone --depth 1 "${CLONE_URL}" "${WORKSPACE}" 2>&1 | sed "s|${GIT_USERN
 fi
 
 cd "${WORKSPACE}"
+
+# Remove the token from the persisted remote URL so the agent cannot read it
+# from .git/config.
+git -C "${WORKSPACE}" remote set-url origin \
+  "https://${CLONE_HOST}/${CODACY_ORG_NAME}/${CODACY_REPO_NAME}.git" 2>/dev/null || true
+
 mkdir -p "$(dirname "${SUMMARY_PATH}")"
 
 echo "==> Running configure-codacy-cloud"
 claude -p "/configure-codacy-cloud" \
+  --permission-mode dontAsk \
+  --model haiku \
   --output-format stream-json \
   --verbose \
   --include-partial-messages \
@@ -79,6 +87,9 @@ if [[ ! -f "${SUMMARY_PATH}" ]]; then
     printf '{"status":"failed","exitCode":%d,"reason":"skill exited non-zero without writing a summary"}\n' "${SKILL_EXIT}" > "${SUMMARY_PATH}"
   fi
 fi
+
+echo "==> Sanitizing summary before upload"
+/usr/local/bin/summary-sanitize.sh "${SUMMARY_PATH}"
 
 echo "==> Uploading summary (${SUMMARY_PATH}) to RESULT_UPLOAD_URL"
 HTTP_CODE=$(

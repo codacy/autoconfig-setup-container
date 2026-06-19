@@ -10,15 +10,14 @@ services:
     devices:
       - /dev/kmsg:/dev/kmsg
     volumes:
-      # Persist tool installations and Trivy DB across runs
-      - codacy-tool-cache:/home/node/.codacy
+      # Persist tool installations and Trivy DB across runs (owned by the runner user)
+      - codacy-tool-cache:/home/runner/.codacy
       # Mount the repo to analyse — override with SOURCE_PATH=/path/to/repo
       - ${SOURCE_PATH:-.}:/workspace
     working_dir: /workspace
     environment:
       - CODACY_API_TOKEN
       - ANTHROPIC_API_KEY
-      - GEMINI_API_KEY
       - JAVA_OPTS=-Xmx1g
     stdin_open: true
     tty: true

@@ -6,19 +6,15 @@ set -e
 
 cd /workspace
 
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "==> Running configure-codacy-cloud with Claude..."
-  claude -p "/configure-codacy-cloud" \
-    --output-format stream-json \
-    --verbose \
-    --include-partial-messages \
-    | jq --unbuffered -rj 'select(.type == "stream_event" and .event.delta.type? == "text_delta") | .event.delta.text'
-
-elif [ -n "${GEMINI_API_KEY:-}" ]; then
-  echo "==> Running configure-codacy-cloud with Gemini..."
-  echo "/configure-codacy-cloud" | gemini
-
-else
-  echo "Error: neither ANTHROPIC_API_KEY nor GEMINI_API_KEY is set." >&2
-  exit 1
-fi
+# This runs as the unprivileged `agent` (the entrypoint already dropped
+# privilege). The real ANTHROPIC_API_KEY is NOT here — claude reaches the
+# Anthropic API through the local auth proxy (ANTHROPIC_BASE_URL) with a dummy
+# token. The entrypoint enforces that the real key was provided before starting.
+echo "==> Running configure-codacy-cloud with Claude..."
+claude -p "/configure-codacy-cloud" \
+  --permission-mode dontAsk \
+  --model haiku \
+  --output-format stream-json \
+  --verbose \
+  --include-partial-messages \
+  | jq --unbuffered -rj 'select(.type == "stream_event" and .event.delta.type? == "text_delta") | .event.delta.text'

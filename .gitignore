@@ -3,3 +3,7 @@
 analysis-cli/
 codacy-cloud-cli/
 gin-autoconfig-test-go/
+.DS_Store
+docs/superpowers/
+docs/test-results-hardening-2026-06-12.md
+docs/test-run-haiku-2026-06-12.md
