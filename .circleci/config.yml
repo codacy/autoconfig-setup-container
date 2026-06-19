@@ -57,6 +57,11 @@ references:
       docker tag "${IMAGE}:${VERSION}" "${ECR_URL}/${IMAGE}:${VERSION}"
       docker push "${ECR_URL}/${IMAGE}:${VERSION}"
 
+      if [[ "${CIRCLE_BRANCH}" == "main" ]]; then
+        docker tag "${IMAGE}:${VERSION}" "${ECR_URL}/${IMAGE}:latest"
+        docker push "${ECR_URL}/${IMAGE}:latest"
+      fi
+
 workflows:
   build-and-publish:
     jobs:
