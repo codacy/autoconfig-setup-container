@@ -66,6 +66,7 @@ CLAUDE_STREAM_FILE=$(mktemp)
 
 echo "==> Running configure-codacy-cloud"
 claude -p "/configure-codacy-cloud" \
+  --model "${CLAUDE_MODEL:-claude-sonnet-4-6}" \
   --output-format stream-json \
   --verbose \
   --include-partial-messages \

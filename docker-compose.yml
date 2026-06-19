@@ -16,6 +16,9 @@ services:
       - ${SOURCE_PATH:-.}:/workspace
     working_dir: /workspace
     command: local-pipeline.sh
+    env_file:
+      - path: .env
+        required: false
     environment:
       - CODACY_API_TOKEN
       - ANTHROPIC_API_KEY
