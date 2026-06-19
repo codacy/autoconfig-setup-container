@@ -72,4 +72,4 @@ RUN mkdir -p /home/node/.claude/commands/references \
 WORKDIR /workspace
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["local-pipeline.sh"]
+CMD ["server-pipeline.sh"]
