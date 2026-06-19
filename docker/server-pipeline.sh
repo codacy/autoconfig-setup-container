@@ -1,7 +1,7 @@
 #!/bin/bash
 # Server-side autoconfig entrypoint. Runs in the AAM-launched k8s pod.
 # Validates env vars, clones the repo, runs the configure-codacy-cloud skill,
-# uploads the summary JSONL to a presigned S3 URL, and exits with the correct status.
+# uploads the summary JSON to a presigned S3 URL, and exits with the correct status.
 
 set -uo pipefail
 
@@ -49,7 +49,7 @@ case "${CODACY_PROVIDER}" in
 esac
 
 WORKSPACE="${WORKSPACE_DIR:-/workspace}"
-SUMMARY_PATH="${AUTOCONFIG_SUMMARY_PATH:-${WORKSPACE}/.codacy/autoconfig-summary.jsonl}"
+SUMMARY_PATH="${AUTOCONFIG_SUMMARY_PATH:-${WORKSPACE}/.codacy/configure-codacy-cloud-summary.json}"
 CLONE_HOST="${CODACY_REPO_CLONE_HOST:-${GIT_HOST_DEFAULT}}"
 CLONE_URL="https://${GIT_USERNAME}:${GIT_TOKEN}@${CLONE_HOST}/${CODACY_ORG_NAME}/${CODACY_REPO_NAME}.git"
 
@@ -62,14 +62,35 @@ fi
 cd "${WORKSPACE}"
 mkdir -p "$(dirname "${SUMMARY_PATH}")"
 
+CLAUDE_STREAM_FILE=$(mktemp)
+
 echo "==> Running configure-codacy-cloud"
 claude -p "/configure-codacy-cloud" \
   --output-format stream-json \
   --verbose \
   --include-partial-messages \
+  | tee "${CLAUDE_STREAM_FILE}" \
   | jq --unbuffered -rj 'select(.type == "stream_event" and .event.delta.type? == "text_delta") | .event.delta.text'
 SKILL_EXIT=${PIPESTATUS[0]}
 echo
+
+# Extract run metadata from the captured stream.
+# model lives on assistant message events (.message.model), not on the result event.
+RUN_META=$(jq -rsc '
+  . as $events |
+  ($events | map(select(.type == "assistant")) | first | .message.model // "unknown") as $model |
+  ($events | map(select(.type == "result")) | last) as $result |
+  $result | {
+    llm: "anthropic",
+    model: $model,
+    tokensIn: (.usage.input_tokens // 0),
+    tokensOut: (.usage.output_tokens // 0),
+    durationMs: (.duration_ms // 0),
+    costUsd: (.total_cost_usd // 0),
+    sessionId: (.session_id // "")
+  }
+' "${CLAUDE_STREAM_FILE}")
+rm -f "${CLAUDE_STREAM_FILE}"
 
 if [[ ! -f "${SUMMARY_PATH}" ]]; then
   echo "==> Skill did not produce ${SUMMARY_PATH}, writing fallback summary"
@@ -78,6 +99,11 @@ if [[ ! -f "${SUMMARY_PATH}" ]]; then
   else
     printf '{"status":"failed","exitCode":%d,"reason":"skill exited non-zero without writing a summary"}\n' "${SKILL_EXIT}" > "${SUMMARY_PATH}"
   fi
+fi
+
+if [[ -n "${RUN_META}" ]]; then
+  jq --argjson run "${RUN_META}" '. + {run: $run}' \
+    "${SUMMARY_PATH}" > "${SUMMARY_PATH}.tmp" && mv "${SUMMARY_PATH}.tmp" "${SUMMARY_PATH}"
 fi
 
 echo "==> Uploading summary (${SUMMARY_PATH}) to RESULT_UPLOAD_URL"
