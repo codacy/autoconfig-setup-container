@@ -74,10 +74,11 @@ claude -p "/configure-codacy-cloud" \
   --output-format stream-json \
   --verbose \
   --include-partial-messages \
-  2> >(tee "${CLAUDE_STDERR_FILE}" >&2) \
+  2> "${CLAUDE_STDERR_FILE}" \
   | tee "${CLAUDE_STREAM_FILE}" \
   | jq --unbuffered -rj 'select(.type == "stream_event" and .event.delta.type? == "text_delta") | .event.delta.text'
 SKILL_EXIT=${PIPESTATUS[0]}
+cat "${CLAUDE_STDERR_FILE}" >&2
 RUN_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo
 
