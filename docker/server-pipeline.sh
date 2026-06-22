@@ -63,6 +63,9 @@ cd "${WORKSPACE}"
 mkdir -p "$(dirname "${SUMMARY_PATH}")"
 
 CLAUDE_STREAM_FILE=$(mktemp)
+CLAUDE_STDERR_FILE=$(mktemp)
+CLAUDE_DIAGNOSTICS_FILE=$(mktemp)
+trap 'rm -f "${CLAUDE_STREAM_FILE:-}" "${CLAUDE_STDERR_FILE:-}" "${CLAUDE_DIAGNOSTICS_FILE:-}"' EXIT
 RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 echo "==> Running configure-codacy-cloud"
@@ -71,6 +74,7 @@ claude -p "/configure-codacy-cloud" \
   --output-format stream-json \
   --verbose \
   --include-partial-messages \
+  2> >(tee "${CLAUDE_STDERR_FILE}" >&2) \
   | tee "${CLAUDE_STREAM_FILE}" \
   | jq --unbuffered -rj 'select(.type == "stream_event" and .event.delta.type? == "text_delta") | .event.delta.text'
 SKILL_EXIT=${PIPESTATUS[0]}
@@ -97,14 +101,46 @@ RUN_META=$(jq -rsc \
     sessionId: (.session_id // "")
   }
 ' "${CLAUDE_STREAM_FILE}")
-rm -f "${CLAUDE_STREAM_FILE}"
+
+if ! jq -sc --rawfile stderr "${CLAUDE_STDERR_FILE}" '
+  {
+    stderr: ($stderr | split("\n") | map(select(length > 0)) | .[-40:]),
+    resultEvents: [ .[] | select(.type == "result") ],
+    errorEvents: [
+      .[]
+      | select(
+          .type == "error"
+          or ((.type == "system" or .type == "assistant") and ((.subtype? // "") | test("error|fail"; "i")))
+        )
+    ],
+    nonTextEvents: [
+      .[]
+      | select(.type != "stream_event" or .event.delta.type? != "text_delta")
+    ][-20:]
+  }
+' "${CLAUDE_STREAM_FILE}" > "${CLAUDE_DIAGNOSTICS_FILE}"; then
+  printf '{"diagnosticError":"failed to parse Claude stream output"}\n' > "${CLAUDE_DIAGNOSTICS_FILE}"
+fi
+
+if [[ ${SKILL_EXIT} -ne 0 ]]; then
+  echo "ERROR: configure-codacy-cloud exited with code ${SKILL_EXIT}; Claude diagnostics follow" >&2
+  jq '.' "${CLAUDE_DIAGNOSTICS_FILE}" >&2 || cat "${CLAUDE_DIAGNOSTICS_FILE}" >&2
+fi
 
 if [[ ! -f "${SUMMARY_PATH}" ]]; then
   echo "==> Skill did not produce ${SUMMARY_PATH}, writing fallback summary"
   if [[ ${SKILL_EXIT} -eq 0 ]]; then
     printf '%s\n' '{"status":"completed","note":"skill exited 0 but did not write a summary"}' > "${SUMMARY_PATH}"
   else
-    printf '{"status":"failed","exitCode":%d,"reason":"skill exited non-zero without writing a summary"}\n' "${SKILL_EXIT}" > "${SUMMARY_PATH}"
+    jq -n \
+      --argjson exitCode "${SKILL_EXIT}" \
+      --slurpfile diagnostics "${CLAUDE_DIAGNOSTICS_FILE}" \
+      '{
+        status: "failed",
+        exitCode: $exitCode,
+        reason: "skill exited non-zero without writing a summary",
+        diagnostics: ($diagnostics[0] // {})
+      }' > "${SUMMARY_PATH}"
   fi
 fi
 
