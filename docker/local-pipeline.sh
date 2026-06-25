@@ -50,9 +50,42 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
 
 elif [ -n "${GEMINI_API_KEY:-}" ]; then
   echo "==> Running configure-codacy-cloud with Gemini..."
-  echo "/configure-codacy-cloud" | gemini
-  SKILL_EXIT=$?
-  RUN_META=""
+  SKILL_MD="/opt/codacy-skills/skills/configure-codacy-cloud/SKILL.md"
+  if [[ ! -f "${SKILL_MD}" ]]; then
+    echo "ERROR: ${SKILL_MD} not found in the container" >&2
+    exit 1
+  fi
+  GEMINI_STREAM_FILE=$(mktemp)
+  RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  gemini -y --skip-trust -m "${GEMINI_MODEL:-gemini-3-flash-preview}" -o stream-json \
+    -p "Execute the skill instructions provided above." < "${SKILL_MD}" \
+    | tee "${GEMINI_STREAM_FILE}" \
+    | jq --unbuffered -rj 'select(.type == "message" and .role == "assistant") | .content'
+  SKILL_EXIT=${PIPESTATUS[0]}
+  RUN_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  echo
+
+  RUN_META=$(jq -rsc \
+    --arg startedAt "${RUN_STARTED_AT}" \
+    --arg finishedAt "${RUN_FINISHED_AT}" '
+    . as $events |
+    ($events | map(select(.type == "init")) | first | .session_id // "") as $sessionId |
+    ($events | map(select(.type == "init")) | first | .model // "unknown") as $model |
+    ($events | map(select(.type == "result")) | last) as $result |
+    {
+      llm: "gemini",
+      model: $model,
+      startedAt: $startedAt,
+      finishedAt: $finishedAt,
+      tokensIn: ($result.stats.input_tokens // 0),
+      tokensOut: ($result.stats.output_tokens // 0),
+      durationMs: ($result.stats.duration_ms // 0),
+      costUsd: ((($result.stats.input_tokens // 0) * 0.50 + ($result.stats.output_tokens // 0) * 3.00) / 1000000),
+      sessionId: $sessionId
+    }
+  ' "${GEMINI_STREAM_FILE}")
+  rm -f "${GEMINI_STREAM_FILE}"
 
 else
   echo "Error: neither ANTHROPIC_API_KEY nor GEMINI_API_KEY is set." >&2
