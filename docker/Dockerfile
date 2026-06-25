@@ -25,6 +25,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     default-jdk-headless \
     # shellcheck — adapter finds it on PATH, skips the GitHub release download
     shellcheck \
+    # ripgrep — gemini-cli prefers rg over the fallback GrepTool
+    ripgrep \
     # Ruby runtime — rubocop, reek, brakeman, sqlint
     ruby \
     ruby-dev \
