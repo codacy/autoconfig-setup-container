@@ -164,7 +164,6 @@ if [[ ! -f "${SUMMARY_PATH}" ]]; then
   fi
 fi
 
-ALLOWED_SUMMARY_KEYS='["summary","toolChanges","patternChanges","recommendedPathsToIgnore","keyImprovements","conflicts","status","note","exitCode","reason","diagnostics"]'
 MAX_SUMMARY_BYTES="${AUTOCONFIG_MAX_SUMMARY_BYTES:-1048576}"
 
 SUMMARY_BYTES=$(wc -c < "${SUMMARY_PATH}" | tr -d '[:space:]')
@@ -176,19 +175,6 @@ fi
 if ! jq -e 'type == "object"' "${SUMMARY_PATH}" >/dev/null 2>&1; then
   echo "WARNING: summary is not a JSON object; replacing it" >&2
   printf '%s\n' '{"status":"failed","reason":"summary was not a valid JSON object"}' > "${SUMMARY_PATH}"
-fi
-
-DROPPED_KEYS=$(jq -r --argjson allowed "${ALLOWED_SUMMARY_KEYS}" \
-  '[keys[] | select(. as $k | $allowed | index($k) | not)] | join(", ")' "${SUMMARY_PATH}")
-if [[ -n "${DROPPED_KEYS}" ]]; then
-  echo "WARNING: dropping unexpected top-level summary keys: ${DROPPED_KEYS}" >&2
-  if jq --argjson allowed "${ALLOWED_SUMMARY_KEYS}" \
-       'with_entries(select(.key as $k | $allowed | index($k)))' \
-       "${SUMMARY_PATH}" > "${SUMMARY_PATH}.tmp"; then
-    mv "${SUMMARY_PATH}.tmp" "${SUMMARY_PATH}"
-  else
-    rm -f "${SUMMARY_PATH}.tmp"
-  fi
 fi
 
 if [[ -n "${RUN_META}" ]]; then
