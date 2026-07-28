@@ -38,8 +38,9 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
   && curl -fsSL https://go.dev/dl/go1.26.3.linux-amd64.tar.gz | tar -C /usr/local -xz
 
 # Install CLIs globally as published packages
+ARG CLAUDE_CODE_VERSION=2.1.220
 RUN npm install -g \
-    @anthropic-ai/claude-code \
+    @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     @google/gemini-cli \
     @codacy/codacy-cloud-cli \
     @codacy/analysis-cli
@@ -54,7 +55,8 @@ COPY docker/init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh \
+COPY docker/sanitize-workspace.sh /usr/local/bin/sanitize-workspace.sh
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/sanitize-workspace.sh \
   && printf 'node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh\nnode ALL=(root) NOPASSWD: /bin/chown -R node\\:node /home/node/.codacy\n' \
      > /etc/sudoers.d/node-firewall \
   && chmod 0440 /etc/sudoers.d/node-firewall
