@@ -108,6 +108,36 @@ fi
 CMD=$(grep -m1 '"subtype":"init"' /tmp/hard.json 2>/dev/null \
   | jq -r '(.slash_commands // []) | index("configure-codacy-cloud") | if . then "ok" else "missing" end' 2>/dev/null)
 echo "HARD_SKILL_CMD=${CMD:-missing}"
+
+# 5. Gemini path. Production passes --skip-trust, which marks the workspace trusted and
+# so enables repo-declared MCP servers; trustedFolders.json reproduces that state here
+# because --skip-trust is not accepted by `mcp list`.
+gem_state() {
+  local out
+  out=$(timeout 40 gemini mcp list 2>&1)
+  if ! printf '%s' "${out}" | grep -q 'repo-evil'; then
+    echo absent
+  elif printf '%s' "${out}" | grep -qE 'repo-evil.*Disabled'; then
+    echo disabled
+  else
+    echo enabled
+  fi
+}
+
+mkdir -p /home/node/.gemini
+
+build_fixture
+cd "${WS}"
+printf '{"%s":"TRUST_FOLDER"}\n' "${WS}" > /home/node/.gemini/trustedFolders.json
+echo "GEM_TRUSTED=$(gem_state)"
+
+rm -f /home/node/.gemini/trustedFolders.json
+echo "GEM_UNTRUSTED=$(gem_state)"
+
+printf '{"%s":"TRUST_FOLDER"}\n' "${WS}" > /home/node/.gemini/trustedFolders.json
+/usr/local/bin/sanitize-workspace.sh "${WS}" >/dev/null 2>&1
+cd "${WS}"
+echo "GEM_SANITIZED=$(gem_state)"
 INNER
 )
 
@@ -134,10 +164,10 @@ check() {
   fi
 }
 
-echo "[1/4] positive control — the test can actually detect the vulnerability"
+echo "[1/5] positive control — the test can actually detect the vulnerability"
 check "unhardened invocation executes repo SessionStart hook" CONTROL_HOOK fired
 
-echo "[2/4] sanitize-workspace.sh"
+echo "[2/5] sanitize-workspace.sh"
 check "repo .claude/ removed"          SAN_CLAUDE_DIR gone
 check "repo .gemini/ removed"          SAN_GEMINI_DIR gone
 check "repo .mcp.json removed"         SAN_MCP        gone
@@ -145,14 +175,19 @@ check "repo CLAUDE.md removed"         SAN_CLAUDEMD   gone
 check "unrelated repo files preserved" SAN_README     kept
 check "clone credential scrubbed"      SAN_TOKEN      scrubbed
 
-echo "[3/4] hardened invocation (config still on disk)"
+echo "[3/5] hardened invocation (config still on disk)"
 check "no SessionStart hook event"     HARD_HOOK_EVENTS 0
 check "hook canary not written"        HARD_CANARY      absent
 check "repo MCP server not launched"   HARD_MCP         not_fired
 check "repo MCP server not loaded"     HARD_REPO_MCP    absent
 
-echo "[4/4] hardening does not break the pipeline"
+echo "[4/5] hardening does not break the pipeline"
 check "user-scope skill command available" HARD_SKILL_CMD ok
+
+echo "[5/5] gemini path (the one production actually runs)"
+check "positive control: trusted workspace enables repo MCP" GEM_TRUSTED   enabled
+check "untrusted workspace disables repo MCP"                GEM_UNTRUSTED disabled
+check "sanitizer removes repo MCP entirely"                  GEM_SANITIZED absent
 
 echo
 echo "==> ${pass} passed, ${fail} failed"
