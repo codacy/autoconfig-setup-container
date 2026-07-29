@@ -63,16 +63,26 @@ if ! git clone --depth 1 "${CLONE_URL}" "${WORKSPACE}" 2>&1 | sed "s|${GIT_USERN
   exit 1
 fi
 
+if ! /usr/local/bin/sanitize-workspace.sh "${WORKSPACE}"; then
+  echo "ERROR: failed to sanitize the cloned workspace; refusing to launch the agent" >&2
+  exit 1
+fi
+
 cd "${WORKSPACE}"
 mkdir -p "$(dirname "${SUMMARY_PATH}")"
+
+AGENT_ENV=(env -u GIT_TOKEN -u RESULT_UPLOAD_URL)
 
 if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
   CLAUDE_STREAM_FILE=$(mktemp)
   RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
   echo "==> Running configure-codacy-cloud with Claude..."
+  "${AGENT_ENV[@]}" \
   claude -p "/configure-codacy-cloud" \
     --model "${CLAUDE_MODEL:-claude-sonnet-4-6}" \
+    --setting-sources user \
+    --strict-mcp-config \
     --output-format stream-json \
     --verbose \
     --include-partial-messages \
@@ -114,6 +124,7 @@ elif [[ -n "${GEMINI_API_KEY:-}" ]]; then
   GEMINI_STREAM_FILE=$(mktemp)
   RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+  "${AGENT_ENV[@]}" \
   gemini -y --skip-trust -m "${GEMINI_MODEL:-gemini-3-flash-preview}" -o stream-json \
     -p "Execute the skill instructions provided above." < "${SKILL_MD}" \
     | tee "${GEMINI_STREAM_FILE}" \
@@ -151,6 +162,19 @@ if [[ ! -f "${SUMMARY_PATH}" ]]; then
   else
     printf '{"status":"failed","exitCode":%d,"reason":"skill exited non-zero without writing a summary"}\n' "${SKILL_EXIT}" > "${SUMMARY_PATH}"
   fi
+fi
+
+MAX_SUMMARY_BYTES="${AUTOCONFIG_MAX_SUMMARY_BYTES:-1048576}"
+
+SUMMARY_BYTES=$(wc -c < "${SUMMARY_PATH}" | tr -d '[:space:]')
+if [[ "${SUMMARY_BYTES}" -gt "${MAX_SUMMARY_BYTES}" ]]; then
+  echo "WARNING: summary is ${SUMMARY_BYTES} bytes (limit ${MAX_SUMMARY_BYTES}); replacing it" >&2
+  printf '%s\n' '{"status":"failed","reason":"summary exceeded the size limit"}' > "${SUMMARY_PATH}"
+fi
+
+if ! jq -e 'type == "object"' "${SUMMARY_PATH}" >/dev/null 2>&1; then
+  echo "WARNING: summary is not a JSON object; replacing it" >&2
+  printf '%s\n' '{"status":"failed","reason":"summary was not a valid JSON object"}' > "${SUMMARY_PATH}"
 fi
 
 if [[ -n "${RUN_META}" ]]; then

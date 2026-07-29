@@ -17,6 +17,8 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "==> Running configure-codacy-cloud with Claude..."
   claude -p "/configure-codacy-cloud" \
     --model "${CLAUDE_MODEL:-claude-sonnet-4-6}" \
+    --setting-sources user \
+    --strict-mcp-config \
     --output-format stream-json \
     --verbose \
     --include-partial-messages \

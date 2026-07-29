@@ -18,6 +18,8 @@ references:
 
       docker build --no-cache -f docker/Dockerfile -t "${IMAGE}:${VERSION}" .
 
+      test/repo-config-injection-test.sh "${IMAGE}:${VERSION}"
+
       echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
       docker scout cves --only-fixed --only-severity high,critical --only-package-type deb --exit-code "${IMAGE}:${VERSION}"
 
