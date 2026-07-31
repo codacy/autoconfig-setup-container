@@ -53,6 +53,7 @@ RUN git clone --depth 1 https://github.com/codacy/codacy-skills.git /opt/codacy-
 
 COPY docker/init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY docker/agent-lib.sh /usr/local/bin/agent-lib.sh
 COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
 COPY docker/sanitize-workspace.sh /usr/local/bin/sanitize-workspace.sh
