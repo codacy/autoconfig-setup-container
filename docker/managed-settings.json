@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "allowManagedPermissionRulesOnly": false
+  },
+  "sandbox": {
+    "failIfUnavailable": false
+  }
+}
