@@ -13,7 +13,6 @@ set -uo pipefail
 source /usr/local/bin/agent-lib.sh
 
 REQUIRED_VARS=(
-  CODACY_API_TOKEN
   CODACY_PROVIDER
   CODACY_ORG_NAME
   CODACY_REPO_NAME
