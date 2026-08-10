@@ -3,6 +3,7 @@
     "allow": [
       "Bash(*)",
       "Read(/workspace/**)",
+      "Read(/home/node/.claude/commands/**)",
       "Write(/workspace/**)",
       "Edit(/workspace/**)"
     ],

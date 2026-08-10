@@ -27,7 +27,8 @@ MANAGED=/etc/claude-code/managed-settings.json
 # statically: allow must not grow beyond the workspace-scoped set, deny must not shrink.
 probe_tool_policy() {
   local expected_allow expected_deny
-  expected_allow='["Bash(*)","Read(/workspace/**)","Write(/workspace/**)","Edit(/workspace/**)"]'
+  # The skill's own reference files live under commands/, so the agent must be able to read them.
+  expected_allow='["Bash(*)","Read(/workspace/**)","Read(/home/node/.claude/commands/**)","Write(/workspace/**)","Edit(/workspace/**)"]'
   expected_deny='["Read(/home/runner/**)","Read(//home/runner/**)","Read(/run/codacy/**)","Read(//run/codacy/**)","Read(/proc/**)","Read(//proc/**)","Read(/etc/sudoers.d/**)","Read(//etc/sudoers.d/**)","Bash(curl:*)","Bash(wget:*)","Bash(ssh:*)","Bash(dig:*)","Bash(nslookup:*)","Bash(host:*)","Bash(ping:*)"]'
 
   echo "POLICY_ALLOW=$(jq -r --argjson e "${expected_allow}" \
@@ -97,7 +98,7 @@ check() {
 }
 
 echo "[1/2] claude tool policy (user settings)"
-check "allow list scoped to /workspace and Bash"   POLICY_ALLOW   ok
+check "allow scoped to workspace + baked commands"  POLICY_ALLOW   ok
 check "secret paths and network tools denied"      POLICY_DENY    ok
 
 echo "[2/2] managed settings lock"
