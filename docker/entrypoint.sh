@@ -26,8 +26,12 @@ chmod 600 /run/codacy/codacy.env
 
 # The agent and the runner-run CLIs must read and write each other's files under /workspace: both
 # share the group `codacy`, setgid makes new files inherit it, umask 002 keeps them group-writable.
-chown agent:codacy /workspace 2>/dev/null || true
-chmod 2775 /workspace 2>/dev/null || true
+# Only in k8s, where /workspace is a pod volume — locally it is the developer's bind-mounted
+# repository, whose ownership is not ours to rewrite.
+if [[ -n "${RUNNING_IN_K8S:-}" ]]; then
+  chown agent:codacy /workspace 2>/dev/null || true
+  chmod 2775 /workspace 2>/dev/null || true
+fi
 umask 002
 
 # Drop to the agent with a clean environment: `env -i` clears everything, only the non-secret vars
