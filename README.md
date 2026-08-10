@@ -46,8 +46,6 @@ CLAUDE_MODEL=claude-opus-4-8 docker compose run --rm codacy-ai
 
 ```bash
 docker run --rm -it \
-  --cap-add=NET_ADMIN --cap-add=NET_RAW \
-  --device /dev/kmsg:/dev/kmsg \
   -v codacy-tool-cache:/home/node/.codacy \
   -v /path/to/your/repo:/workspace \
   --env-file .env \
@@ -56,8 +54,6 @@ docker run --rm -it \
 
 | Flag                                      | Purpose                                                        |
 |-------------------------------------------|----------------------------------------------------------------|
-| `--cap-add=NET_ADMIN --cap-add=NET_RAW`   | Required to enforce the outbound firewall inside the container |
-| `--device /dev/kmsg:/dev/kmsg`            | Kernel device needed by the firewall block-log stream          |
 | `-v codacy-tool-cache:/home/node/.codacy` | Persistent volume so downloaded tools survive between runs     |
 | `-v /path/to/repo:/workspace`             | Mounts the repository as `/workspace`                          |
 | `--env-file .env`                         | Loads all variables from the `.env` file                       |
@@ -78,13 +74,10 @@ Both scripts run the same skill, produce the same summary format, and capture th
 
 ### Testing server-pipeline.sh locally
 
-The local firewall does not allow git provider hosts, so set `RUNNING_IN_K8S=true` to skip it:
-
 ```bash
 docker run --rm -it \
   -v codacy-tool-cache:/home/node/.codacy \
   --env-file .env \
-  -e RUNNING_IN_K8S=true \
   -e GIT_TOKEN=<token> \
   -e CODACY_PROVIDER=gh \
   -e CODACY_ORG_NAME=your-org \
@@ -122,5 +115,6 @@ if any are missing.
 - `codacy-analysis` — Codacy Analysis CLI (used by the skill only for config-file operations)
 - `claude` / `gemini` — AI assistants
 - Java, Python 3, Ruby, Go 1.26, shellcheck
-- Outbound firewall — allowlist for Claude, Gemini, and Codacy only. In production (k8s) the firewall
-  is skipped and egress is enforced by NetworkPolicy at the cluster level instead.
+
+Egress is not restricted inside the container. Local runs are trusted; in production egress is enforced by
+k8s NetworkPolicy at the cluster level.

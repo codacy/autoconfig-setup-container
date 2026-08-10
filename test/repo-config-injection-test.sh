@@ -14,7 +14,6 @@ echo "==> Image under test: ${IMAGE}"
 
 RESULTS=$(docker run --rm -i \
   --network none \
-  -e RUNNING_IN_K8S=true \
   -e ANTHROPIC_API_KEY=invalid-test-key \
   -e CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT}" \
   --entrypoint /bin/bash \
