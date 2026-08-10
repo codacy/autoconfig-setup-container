@@ -33,9 +33,10 @@ COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
 COPY docker/clone-workspace.sh /usr/local/bin/clone-workspace.sh
 COPY docker/sanitize-workspace.sh /usr/local/bin/sanitize-workspace.sh
+COPY docker/summary-sanitize.sh /usr/local/bin/summary-sanitize.sh
 # Root-owned so the agent user cannot relax it at runtime
 COPY docker/managed-settings.json /etc/claude-code/managed-settings.json
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh \
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh /usr/local/bin/summary-sanitize.sh \
   && printf 'node ALL=(root) NOPASSWD: /bin/chown -R node\\:node /home/node/.codacy\n' \
      > /etc/sudoers.d/node-toolcache \
   && chmod 0440 /etc/sudoers.d/node-toolcache

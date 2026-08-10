@@ -69,8 +69,25 @@ probe_no_bypass() {
     | jq -r '.permissionMode // "unknown"' 2>/dev/null || echo unknown)"
 }
 
+probe_summary_sanitize() {
+  local f=/tmp/probe-summary.json
+  jq -n '{
+    notes: "used sk-ant-api03-AAAABBBBCCCCDDDDEEEE1234 and ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 while configuring",
+    tool: "eslint",
+    enabled: true
+  }' > "${f}"
+
+  /usr/local/bin/summary-sanitize.sh "${f}"
+
+  grep -qE 'sk-ant-|ghp_' "${f}" && echo "SANITIZE_SECRETS=present" || echo "SANITIZE_SECRETS=gone"
+  jq -e . "${f}" >/dev/null 2>&1 && echo "SANITIZE_JSON=valid" || echo "SANITIZE_JSON=invalid"
+  echo "SANITIZE_INTACT=$(jq -r 'if .tool == "eslint" and .enabled == true then "ok" else "changed" end' \
+    "${f}" 2>/dev/null || echo unreadable)"
+}
+
 probe_policy_config
 probe_no_bypass
+probe_summary_sanitize
 INNER
 )
 
@@ -97,14 +114,19 @@ check() {
   fi
 }
 
-echo "[1/2] config assertions — what the image ships, not enforcement"
+echo "[1/3] config assertions — what the image ships, not enforcement"
 check "settings.json ships scoped allow list"       POLICY_ALLOW   ok
 check "settings.json ships secret/network deny list" POLICY_DENY   ok
 check "managed-settings.json installed"             MANAGED_FILE   present
 check "managed-settings.json ships bypass lock"     MANAGED_BYPASS disable
 
-echo "[2/2] behavioral — what claude actually does with that config"
+echo "[2/3] behavioral — what claude actually does with that config"
 check "--dangerously-skip-permissions downgraded"   BYPASS_MODE    default
+
+echo "[3/3] behavioral — summary sanitizer run on a crafted summary"
+check "secret-shaped strings redacted"              SANITIZE_SECRETS gone
+check "summary still valid JSON"                    SANITIZE_JSON    valid
+check "unrelated summary values intact"             SANITIZE_INTACT  ok
 
 echo
 echo "==> ${pass} passed, ${fail} failed"
