@@ -7,9 +7,18 @@ set -uo pipefail
 # shellcheck source=docker/agent-lib.sh
 source /usr/local/bin/agent-lib.sh
 
-WORKSPACE="${WORKSPACE_DIR:-/workspace}"
-SUMMARY_PATH="${AUTOCONFIG_SUMMARY_PATH:-${WORKSPACE}/.codacy/configure-codacy-cloud-summary.json}"
+SOURCE_WORKSPACE="${WORKSPACE_DIR:-/workspace}"
 AGENT_TIMEOUT="${AUTOCONFIG_AGENT_TIMEOUT:-70m}"
+
+# /workspace is the developer's bind mount. Run the agent against a sanitized throwaway copy so
+# repo-shipped CLAUDE.md/.claude/.gemini/.mcp.json cannot inject into the agent, without ever
+# modifying or deleting the developer's real files.
+WORKSPACE="$(mktemp -d)"
+cp -a "${SOURCE_WORKSPACE}/." "${WORKSPACE}/"
+/usr/local/bin/sanitize-workspace.sh "${WORKSPACE}"
+
+FINAL_SUMMARY_PATH="${AUTOCONFIG_SUMMARY_PATH:-${SOURCE_WORKSPACE}/.codacy/configure-codacy-cloud-summary.json}"
+SUMMARY_PATH="${WORKSPACE}/.codacy/configure-codacy-cloud-summary.json"
 
 cd "${WORKSPACE}"
 mkdir -p "$(dirname "${SUMMARY_PATH}")"
@@ -114,6 +123,12 @@ derive_outcome "${SKILL_EXIT}" "${AGENT_ERROR}" "${SUMMARY_PATH}" "${AGENT_TIMEO
 if [[ -f "${SUMMARY_PATH}" && -n "${RUN_META}" ]]; then
   jq --argjson run "${RUN_META}" '. + {run: $run}' \
     "${SUMMARY_PATH}" > "${SUMMARY_PATH}.tmp" && mv "${SUMMARY_PATH}.tmp" "${SUMMARY_PATH}"
+fi
+
+# Publish the summary from the throwaway workspace back to the developer's mount.
+if [[ -f "${SUMMARY_PATH}" ]]; then
+  mkdir -p "$(dirname "${FINAL_SUMMARY_PATH}")"
+  cp -f "${SUMMARY_PATH}" "${FINAL_SUMMARY_PATH}"
 fi
 
 if [[ ${OUTCOME_EXIT} -ne ${EXIT_OK} ]]; then

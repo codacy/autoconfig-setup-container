@@ -137,6 +137,12 @@ printf '{"%s":"TRUST_FOLDER"}\n' "${WS}" > /home/node/.gemini/trustedFolders.jso
 /usr/local/bin/sanitize-workspace.sh "${WS}" >/dev/null 2>&1
 cd "${WS}"
 echo "GEM_SANITIZED=$(gem_state)"
+
+# 6. Every agent pipeline must sanitize the workspace before launching the agent.
+grep -q sanitize-workspace /usr/local/bin/clone-workspace.sh \
+  && echo "PIPE_CLONE_SANITIZE=yes" || echo "PIPE_CLONE_SANITIZE=no"
+grep -q sanitize-workspace /usr/local/bin/local-pipeline.sh \
+  && echo "PIPE_LOCAL_SANITIZE=yes" || echo "PIPE_LOCAL_SANITIZE=no"
 INNER
 )
 
@@ -163,10 +169,10 @@ check() {
   fi
 }
 
-echo "[1/5] positive control — the test can actually detect the vulnerability"
+echo "[1/6] positive control — the test can actually detect the vulnerability"
 check "unhardened invocation executes repo SessionStart hook" CONTROL_HOOK fired
 
-echo "[2/5] sanitize-workspace.sh"
+echo "[2/6] sanitize-workspace.sh"
 check "repo .claude/ removed"          SAN_CLAUDE_DIR gone
 check "repo .gemini/ removed"          SAN_GEMINI_DIR gone
 check "repo .mcp.json removed"         SAN_MCP        gone
@@ -174,19 +180,23 @@ check "repo CLAUDE.md removed"         SAN_CLAUDEMD   gone
 check "unrelated repo files preserved" SAN_README     kept
 check "clone credential scrubbed"      SAN_TOKEN      scrubbed
 
-echo "[3/5] hardened invocation (config still on disk)"
+echo "[3/6] hardened invocation (config still on disk)"
 check "no SessionStart hook event"     HARD_HOOK_EVENTS 0
 check "hook canary not written"        HARD_CANARY      absent
 check "repo MCP server not launched"   HARD_MCP         not_fired
 check "repo MCP server not loaded"     HARD_REPO_MCP    absent
 
-echo "[4/5] hardening does not break the pipeline"
+echo "[4/6] hardening does not break the pipeline"
 check "user-scope skill command available" HARD_SKILL_CMD ok
 
-echo "[5/5] gemini path (the one production actually runs)"
+echo "[5/6] gemini path (the one production actually runs)"
 check "positive control: trusted workspace enables repo MCP" GEM_TRUSTED   enabled
 check "untrusted workspace disables repo MCP"                GEM_UNTRUSTED disabled
 check "sanitizer removes repo MCP entirely"                  GEM_SANITIZED absent
+
+echo "[6/6] every agent pipeline sanitizes the workspace before launch"
+check "server clone pipeline sanitizes" PIPE_CLONE_SANITIZE yes
+check "local pipeline sanitizes"        PIPE_LOCAL_SANITIZE yes
 
 echo
 echo "==> ${pass} passed, ${fail} failed"
