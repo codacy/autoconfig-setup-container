@@ -14,7 +14,6 @@ source /usr/local/bin/agent-lib.sh
 
 REQUIRED_VARS=(
   CODACY_API_TOKEN
-  GIT_TOKEN
   CODACY_PROVIDER
   CODACY_ORG_NAME
   CODACY_REPO_NAME
@@ -38,50 +37,22 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${GEMINI_API_KEY:-}" ]]; then
   exit ${EXIT_BAD_INPUT}
 fi
 
-# Provider-specific HTTPS clone URL construction.
-# Token value comes from GIT_TOKEN; the username portion differs per provider.
-case "${CODACY_PROVIDER}" in
-  gh|ghe)
-    GIT_USERNAME="x-access-token"
-    GIT_HOST_DEFAULT="github.com"
-    ;;
-  gl|gle)
-    GIT_USERNAME="oauth2"
-    GIT_HOST_DEFAULT="gitlab.com"
-    ;;
-  bb)
-    GIT_USERNAME="x-token-auth"
-    GIT_HOST_DEFAULT="bitbucket.org"
-    ;;
-  *)
-    echo "ERROR: unsupported CODACY_PROVIDER '${CODACY_PROVIDER}' (expected gh, ghe, gl, gle, bb)" >&2
-    exit ${EXIT_BAD_INPUT}
-    ;;
-esac
-
 WORKSPACE="${WORKSPACE_DIR:-/workspace}"
 SUMMARY_PATH="${AUTOCONFIG_SUMMARY_PATH:-${WORKSPACE}/.codacy/configure-codacy-cloud-summary.json}"
-CLONE_HOST="${CODACY_REPO_CLONE_HOST:-${GIT_HOST_DEFAULT}}"
-CLONE_URL="https://${GIT_USERNAME}:${GIT_TOKEN}@${CLONE_HOST}/${CODACY_ORG_NAME}/${CODACY_REPO_NAME}.git"
 
 # Nothing inside the pod bounds an agent that stalls, so cap it here.
 AGENT_TIMEOUT="${AUTOCONFIG_AGENT_TIMEOUT:-70m}"
 
-echo "==> Cloning ${CODACY_PROVIDER}/${CODACY_ORG_NAME}/${CODACY_REPO_NAME} into ${WORKSPACE}"
-if ! git clone --depth 1 "${CLONE_URL}" "${WORKSPACE}" 2>&1 | sed "s|${GIT_USERNAME}:[^@]*@|${GIT_USERNAME}:***@|g"; then
-  echo "ERROR: git clone failed" >&2
-  exit ${EXIT_BAD_INPUT}
-fi
-
-if ! /usr/local/bin/sanitize-workspace.sh "${WORKSPACE}"; then
-  echo "ERROR: failed to sanitize the cloned workspace; refusing to launch the agent" >&2
+# The git-clone init container fills ${WORKSPACE} first; empty means the pod is miswired.
+if [[ ! -d "${WORKSPACE}" ]] || [[ -z "$(ls -A "${WORKSPACE}" 2>/dev/null)" ]]; then
+  echo "ERROR: workspace ${WORKSPACE} is empty; the git-clone init container must run first" >&2
   exit ${EXIT_BAD_INPUT}
 fi
 
 cd "${WORKSPACE}"
 mkdir -p "$(dirname "${SUMMARY_PATH}")"
 
-AGENT_ENV=(env -u GIT_TOKEN -u RESULT_UPLOAD_URL)
+AGENT_ENV=(env -u RESULT_UPLOAD_URL)
 AGENT_ERROR=""
 
 if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then

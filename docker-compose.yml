@@ -4,11 +4,6 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     image: codacy/autoconfig
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    devices:
-      - /dev/kmsg:/dev/kmsg
     volumes:
       # Persist tool installations and Trivy DB across runs
       - codacy-tool-cache:/home/node/.codacy

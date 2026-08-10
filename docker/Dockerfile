@@ -1,44 +1,20 @@
 FROM node:20-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH="/usr/local/go/bin:${PATH}"
 
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-    # Firewall
-    iptables \
-    ipset \
-    iproute2 \
-    dnsutils \
-    aggregate \
-    # Utilities
     curl \
     ca-certificates \
     git \
     jq \
     unzip \
     sudo \
-    # Python runtime — checkov, pylint, bandit, lizard, flawfinder, prospector
-    python3 \
-    python3-pip \
-    python3-venv \
-    # Java runtime — pmd, checkstyle, detekt, scalastyle
-    default-jdk-headless \
-    # shellcheck — adapter finds it on PATH, skips the GitHub release download
-    shellcheck \
-    # ripgrep — gemini-cli prefers rg over the fallback GrepTool
+    # Used by gemini's file search
     ripgrep \
-    # Ruby runtime — rubocop, reek, brakeman, sqlint
-    ruby \
-    ruby-dev \
-    build-essential \
-  && rm -rf /var/lib/apt/lists/* \
-  # Ensure `python` resolves (several tool adapters call `python3` but some call `python`)
-  && ln -sf /usr/bin/python3 /usr/local/bin/python \
-  # Go runtime — revive type-checking rules
-  && curl -fsSL https://go.dev/dl/go1.26.3.linux-amd64.tar.gz | tar -C /usr/local -xz
+  && rm -rf /var/lib/apt/lists/*
 
 # Install CLIs globally as published packages
-ARG CLAUDE_CODE_VERSION=2.1.220
+ARG CLAUDE_CODE_VERSION=2.1.226
 RUN npm install -g \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     @google/gemini-cli \
@@ -51,16 +27,16 @@ RUN npm install -g \
 ADD https://api.github.com/repos/codacy/codacy-skills/git/refs/heads/master /tmp/codacy-skills-ref
 RUN git clone --depth 1 https://github.com/codacy/codacy-skills.git /opt/codacy-skills
 
-COPY docker/init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/agent-lib.sh /usr/local/bin/agent-lib.sh
 COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
+COPY docker/clone-workspace.sh /usr/local/bin/clone-workspace.sh
 COPY docker/sanitize-workspace.sh /usr/local/bin/sanitize-workspace.sh
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/sanitize-workspace.sh \
-  && printf 'node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh\nnode ALL=(root) NOPASSWD: /bin/chown -R node\\:node /home/node/.codacy\n' \
-     > /etc/sudoers.d/node-firewall \
-  && chmod 0440 /etc/sudoers.d/node-firewall
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh \
+  && printf 'node ALL=(root) NOPASSWD: /bin/chown -R node\\:node /home/node/.codacy\n' \
+     > /etc/sudoers.d/node-toolcache \
+  && chmod 0440 /etc/sudoers.d/node-toolcache
 
 USER node
 
