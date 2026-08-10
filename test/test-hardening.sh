@@ -23,9 +23,9 @@ set -uo pipefail
 SETTINGS=/home/node/.claude/settings.json
 MANAGED=/etc/claude-code/managed-settings.json
 
-# The tool policy cannot be exercised end to end without a valid API key, so assert it
-# statically: allow must not grow beyond the workspace-scoped set, deny must not shrink.
-probe_tool_policy() {
+# Config assertions only — these read the files the image ships, they do not exercise
+# enforcement. Allow must not grow beyond the scoped set, deny must not shrink.
+probe_policy_config() {
   local expected_allow expected_deny
   # The skill's own reference files live under commands/, so the agent must be able to read them.
   expected_allow='["Bash(*)","Read(/workspace/**)","Read(/home/node/.claude/commands/**)","Write(/workspace/**)","Edit(/workspace/**)"]'
@@ -38,6 +38,9 @@ probe_tool_policy() {
   echo "POLICY_DENY=$(jq -r --argjson e "${expected_deny}" \
     '($e - (.permissions.deny // [])) | if length == 0 then "ok" else "missing:" + join(",") end' \
     "${SETTINGS}" 2>/dev/null || echo unreadable)"
+
+  [[ -f "${MANAGED}" ]] && echo "MANAGED_FILE=present" || echo "MANAGED_FILE=absent"
+  echo "MANAGED_BYPASS=$(jq -r '.permissions.disableBypassPermissionsMode // "unset"' "${MANAGED}" 2>/dev/null || echo unreadable)"
 }
 
 # The init event lands before the API call, so kill as soon as it does — an invalid
@@ -60,16 +63,13 @@ run_claude() {
 }
 
 probe_no_bypass() {
-  [[ -f "${MANAGED}" ]] && echo "MANAGED_FILE=present" || echo "MANAGED_FILE=absent"
-  echo "MANAGED_BYPASS=$(jq -r '.permissions.disableBypassPermissionsMode // "unset"' "${MANAGED}" 2>/dev/null || echo unreadable)"
-
   # claude does not exit on --dangerously-skip-permissions, it downgrades the mode.
   run_claude /tmp/bypass.json --dangerously-skip-permissions
   echo "BYPASS_MODE=$(grep -m1 '"subtype":"init"' /tmp/bypass.json 2>/dev/null \
     | jq -r '.permissionMode // "unknown"' 2>/dev/null || echo unknown)"
 }
 
-probe_tool_policy
+probe_policy_config
 probe_no_bypass
 INNER
 )
@@ -97,14 +97,14 @@ check() {
   fi
 }
 
-echo "[1/2] claude tool policy (user settings)"
-check "allow scoped to workspace + baked commands"  POLICY_ALLOW   ok
-check "secret paths and network tools denied"      POLICY_DENY    ok
+echo "[1/2] config assertions — what the image ships, not enforcement"
+check "settings.json ships scoped allow list"       POLICY_ALLOW   ok
+check "settings.json ships secret/network deny list" POLICY_DENY   ok
+check "managed-settings.json installed"             MANAGED_FILE   present
+check "managed-settings.json ships bypass lock"     MANAGED_BYPASS disable
 
-echo "[2/2] managed settings lock"
-check "managed settings installed"                 MANAGED_FILE   present
-check "bypass permissions mode disabled"           MANAGED_BYPASS disable
-check "--dangerously-skip-permissions downgraded"  BYPASS_MODE    default
+echo "[2/2] behavioral — what claude actually does with that config"
+check "--dangerously-skip-permissions downgraded"   BYPASS_MODE    default
 
 echo
 echo "==> ${pass} passed, ${fail} failed"
