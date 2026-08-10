@@ -67,7 +67,10 @@ if ! /usr/local/bin/sanitize-workspace.sh "${WORKSPACE}"; then
   exit ${EXIT_BAD_INPUT}
 fi
 
-chown -R agent:codacy "${WORKSPACE}" 2>/dev/null || true
+if ! /usr/local/bin/handoff-workspace.sh "${WORKSPACE}"; then
+  echo "ERROR: failed to hand the workspace over to the agent user; refusing to launch the agent" >&2
+  exit ${EXIT_BAD_INPUT}
+fi
 
 echo "==> Workspace ready at ${WORKSPACE}"
 exit ${EXIT_OK}

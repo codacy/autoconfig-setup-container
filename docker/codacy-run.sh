@@ -17,7 +17,7 @@ esac
 # Destructive configuration flags: autoconfig tunes a repository, it never resets one.
 for arg in "$@"; do
   case "${arg}" in
-    --force|--unlink-standard|--disable-all)
+    --force|--force=*|--unlink-standard|--unlink-standard=*|--disable-all|--disable-all=*)
       echo "ERROR: flag ${arg} is blocked in the autoconfig container" >&2; exit 1;;
   esac
 done
