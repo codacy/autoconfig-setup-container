@@ -12,8 +12,12 @@ CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-25}"
 
 echo "==> Image under test: ${IMAGE}"
 
+# Runs as the agent user with the agent's HOME — the same identity the entrypoint drops to, so the
+# user-scope settings and skills under test are the ones production loads.
 RESULTS=$(docker run --rm -i \
   --network none \
+  -u agent \
+  -e HOME=/home/agent \
   -e ANTHROPIC_API_KEY=invalid-test-key \
   -e CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT}" \
   --entrypoint /bin/bash \
@@ -123,17 +127,17 @@ gem_state() {
   fi
 }
 
-mkdir -p /home/node/.gemini
+mkdir -p /home/agent/.gemini
 
 build_fixture
 cd "${WS}"
-printf '{"%s":"TRUST_FOLDER"}\n' "${WS}" > /home/node/.gemini/trustedFolders.json
+printf '{"%s":"TRUST_FOLDER"}\n' "${WS}" > /home/agent/.gemini/trustedFolders.json
 echo "GEM_TRUSTED=$(gem_state)"
 
-rm -f /home/node/.gemini/trustedFolders.json
+rm -f /home/agent/.gemini/trustedFolders.json
 echo "GEM_UNTRUSTED=$(gem_state)"
 
-printf '{"%s":"TRUST_FOLDER"}\n' "${WS}" > /home/node/.gemini/trustedFolders.json
+printf '{"%s":"TRUST_FOLDER"}\n' "${WS}" > /home/agent/.gemini/trustedFolders.json
 /usr/local/bin/sanitize-workspace.sh "${WS}" >/dev/null 2>&1
 cd "${WS}"
 echo "GEM_SANITIZED=$(gem_state)"

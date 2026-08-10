@@ -20,15 +20,23 @@ RESULTS=$(docker run --rm -i \
   "${IMAGE}" -s <<'INNER' 2>/dev/null
 set -uo pipefail
 
-SETTINGS=/home/node/.claude/settings.json
+SETTINGS=/home/agent/.claude/settings.json
 MANAGED=/etc/claude-code/managed-settings.json
+TOKEN_SENTINEL=codacy-token-sentinel-9f3a
+
+# The payload runs as root (the image's default user); anything that must see what the agent sees
+# runs through here, with the same HOME the entrypoint hands it.
+as_agent() {
+  runuser -u agent -- env HOME=/home/agent USER=agent PATH="${PATH}" \
+    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" "$@"
+}
 
 # Config assertions only — these read the files the image ships, they do not exercise
 # enforcement. Allow must not grow beyond the scoped set, deny must not shrink.
 probe_policy_config() {
   local expected_allow expected_deny
   # The skill's own reference files live under commands/, so the agent must be able to read them.
-  expected_allow='["Bash(*)","Read(/workspace/**)","Read(/home/node/.claude/commands/**)","Write(/workspace/**)","Edit(/workspace/**)"]'
+  expected_allow='["Bash(*)","Read(/workspace/**)","Read(/home/agent/.claude/commands/**)","Write(/workspace/**)","Edit(/workspace/**)"]'
   expected_deny='["Read(/home/runner/**)","Read(//home/runner/**)","Read(/run/codacy/**)","Read(//run/codacy/**)","Read(/proc/**)","Read(//proc/**)","Read(/etc/sudoers.d/**)","Read(//etc/sudoers.d/**)","Bash(curl:*)","Bash(wget:*)","Bash(ssh:*)","Bash(dig:*)","Bash(nslookup:*)","Bash(host:*)","Bash(ping:*)"]'
 
   echo "POLICY_ALLOW=$(jq -r --argjson e "${expected_allow}" \
@@ -47,7 +55,7 @@ probe_policy_config() {
 # key makes claude hang for the full timeout otherwise.
 run_claude() {
   local out="$1"; shift
-  claude -p "hi" "$@" --output-format stream-json --verbose </dev/null >"${out}" 2>/dev/null &
+  as_agent claude -p "hi" "$@" --output-format stream-json --verbose </dev/null >"${out}" 2>/dev/null &
   local pid=$! ticks=0
   while kill -0 "${pid}" 2>/dev/null; do
     if grep -q '"subtype":"init"' "${out}" 2>/dev/null; then
@@ -85,9 +93,55 @@ probe_summary_sanitize() {
     "${f}" 2>/dev/null || echo unreadable)"
 }
 
+probe_distinct_uids() {
+  echo "UID_RUNNER=$(id -u runner 2>/dev/null || echo missing)"
+  echo "UID_AGENT=$(id -u agent 2>/dev/null || echo missing)"
+  echo "GID_CODACY=$(getent group codacy | cut -d: -f3)"
+}
+
+# Runs the real entrypoint with a sentinel token and reports what the agent inherits.
+probe_privilege_drop() {
+  local out
+  out=$(CODACY_API_TOKEN="${TOKEN_SENTINEL}" GEMINI_API_KEY=gemini-test-key \
+    /usr/local/bin/entrypoint.sh bash -c \
+    'echo "DROP_USER=$(id -un)"; env; cat /proc/*/cmdline 2>/dev/null | tr "\0" "\n"' 2>/dev/null)
+
+  printf '%s\n' "${out}" | grep -m1 '^DROP_USER=' || echo "DROP_USER=missing"
+  # One grep covers both leak paths: the sentinel appears in neither the environment nor any argv.
+  printf '%s' "${out}" | grep -q "${TOKEN_SENTINEL}" && echo "DROP_TOKEN=leaked" || echo "DROP_TOKEN=absent"
+  printf '%s' "${out}" | grep -q '^CODACY_API_TOKEN=' && echo "DROP_TOKEN_VAR=present" || echo "DROP_TOKEN_VAR=absent"
+  printf '%s' "${out}" | grep -q '^GEMINI_API_KEY=gemini-test-key$' && echo "DROP_GEMINI=present" || echo "DROP_GEMINI=missing"
+}
+
+# Depends on probe_privilege_drop having staged the token file.
+probe_creds_unreadable() {
+  echo "CREDS_PERMS=$(stat -c '%U %a' /run/codacy/codacy.env 2>/dev/null || echo missing)"
+  as_agent cat /run/codacy/codacy.env >/dev/null 2>&1 && echo "CREDS_READ=readable" || echo "CREDS_READ=denied"
+}
+
+probe_shim() {
+  as_agent codacy --help >/dev/null 2>&1 && echo "SHIM_HELP=ok" || echo "SHIM_HELP=failed"
+  # The sudo rule permits any argument, so the launcher itself must reject other binaries.
+  as_agent sudo -n -u runner /usr/local/bin/codacy-run ../../bin/sh -c id >/dev/null 2>&1 \
+    && echo "SHIM_TRAVERSAL=allowed" || echo "SHIM_TRAVERSAL=rejected"
+}
+
+probe_blocked_flags() {
+  local out rc
+  out=$(as_agent codacy repository-configure --force 2>&1); rc=$?
+  echo "BLOCKED_RC=${rc}"
+  printf '%s' "${out}" | grep -q 'blocked in the autoconfig container' \
+    && echo "BLOCKED_MSG=ok" || echo "BLOCKED_MSG=missing"
+}
+
 probe_policy_config
 probe_no_bypass
 probe_summary_sanitize
+probe_distinct_uids
+probe_privilege_drop
+probe_creds_unreadable
+probe_shim
+probe_blocked_flags
 INNER
 )
 
@@ -114,19 +168,38 @@ check() {
   fi
 }
 
-echo "[1/3] config assertions — what the image ships, not enforcement"
+echo "[1/6] config assertions — what the image ships, not enforcement"
 check "settings.json ships scoped allow list"       POLICY_ALLOW   ok
 check "settings.json ships secret/network deny list" POLICY_DENY   ok
 check "managed-settings.json installed"             MANAGED_FILE   present
 check "managed-settings.json ships bypass lock"     MANAGED_BYPASS disable
 
-echo "[2/3] behavioral — what claude actually does with that config"
+echo "[2/6] behavioral — what claude actually does with that config"
 check "--dangerously-skip-permissions downgraded"   BYPASS_MODE    default
 
-echo "[3/3] behavioral — summary sanitizer run on a crafted summary"
+echo "[3/6] behavioral — summary sanitizer run on a crafted summary"
 check "secret-shaped strings redacted"              SANITIZE_SECRETS gone
 check "summary still valid JSON"                    SANITIZE_JSON    valid
 check "unrelated summary values intact"             SANITIZE_INTACT  ok
+
+echo "[4/6] behavioral — privilege separation"
+check "runner uid"                                  UID_RUNNER     1001
+check "agent uid"                                   UID_AGENT      1002
+check "shared codacy gid"                           GID_CODACY     1003
+check "agent reaches the Codacy CLI via the shim"   SHIM_HELP      ok
+check "launcher rejects other binaries"             SHIM_TRAVERSAL rejected
+
+echo "[5/6] behavioral — entrypoint drops privilege and scrubs the environment"
+check "pipeline runs as the agent user"             DROP_USER      agent
+check "token value absent from env and argv"        DROP_TOKEN     absent
+check "CODACY_API_TOKEN not in the agent env"       DROP_TOKEN_VAR absent
+check "GEMINI_API_KEY still passed through"         DROP_GEMINI    present
+check "staged token file is runner-only"            CREDS_PERMS    "runner 600"
+check "agent cannot read the staged token"          CREDS_READ     denied
+
+echo "[6/6] behavioral — destructive CLI flags blocked"
+check "--force rejected by the launcher"            BLOCKED_RC     1
+check "rejection explains why"                      BLOCKED_MSG    ok
 
 echo
 echo "==> ${pass} passed, ${fail} failed"
