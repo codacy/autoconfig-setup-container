@@ -21,4 +21,11 @@ if [[ -e "${WORKSPACE}/.git" ]]; then
   chmod -R g-w "${WORKSPACE}/.git" || exit 1
 fi
 
+# The workspace root itself stays root-owned and sticky: without this the agent could not write
+# .git, but could rename it aside and drop in a .git of its own, which `safe.directory /workspace`
+# would happily accept. Sticky lets the agent create and remove its own entries only; setgid keeps
+# everything in the shared group.
+chown root:codacy "${WORKSPACE}" || exit 1
+chmod 3775 "${WORKSPACE}" || exit 1
+
 exit 0
