@@ -43,22 +43,34 @@ fi
 chown root:runner /run/codacy/codacy.env
 chmod 640 /run/codacy/codacy.env
 
+# A reaped-but-unwaited child still answers `kill -0`, so read the state out of /proc instead.
+proxy_alive() { [ "$(awk '{print $3}' "/proc/${proxy_pid}/stat" 2>/dev/null)" != "Z" ] && kill -0 "${proxy_pid}" 2>/dev/null; }
+
 # Anthropic auth proxy: it runs as runner and holds the real key in its own environment, so the
 # agent talks to 127.0.0.1 with a dummy credential and never has a key it could exfiltrate.
 ANTHROPIC_ENV=()
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   PROXY_PORT="${ANTHROPIC_PROXY_PORT:-8118}"
+  # Staged like the Codacy token rather than passed on the command line: /proc/<pid>/cmdline is
+  # world-readable, so a key in argv would be readable by the agent for the whole run (CWE-214).
+  printf 'export ANTHROPIC_API_KEY=%q\n' "${ANTHROPIC_API_KEY}" > /run/codacy/anthropic.env
+  chown root:runner /run/codacy/anthropic.env
+  chmod 640 /run/codacy/anthropic.env
   # env -i keeps CODACY_API_TOKEN out of the proxy's /proc/<pid>/environ as well.
-  runuser -u runner -- env -i PATH="${PATH}" \
-    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" ANTHROPIC_PROXY_PORT="${PROXY_PORT}" \
-    node /usr/local/bin/anthropic-proxy.js &
+  runuser -u runner -- env -i PATH="${PATH}" ANTHROPIC_PROXY_PORT="${PROXY_PORT}" \
+    bash -c '. /run/codacy/anthropic.env; exec node /usr/local/bin/anthropic-proxy.js' &
+  proxy_pid=$!
   proxy_up=0
   for _ in $(seq 30); do
+    proxy_alive || break
     if (exec 3<>"/dev/tcp/127.0.0.1/${PROXY_PORT}") 2>/dev/null; then proxy_up=1; break; fi
     sleep 0.1
   done
-  if [ "${proxy_up}" -ne 1 ]; then
-    echo "ERROR: anthropic proxy did not bind 127.0.0.1:${PROXY_PORT}" >&2
+  # The port answering is not proof: on EADDRINUSE a foreign listener answers at once while our node
+  # is still on its way out, so settle before the final liveness check.
+  sleep 0.3
+  if [ "${proxy_up}" -ne 1 ] || ! proxy_alive; then
+    echo "ERROR: anthropic proxy did not start on 127.0.0.1:${PROXY_PORT}" >&2
     exit 1
   fi
   ANTHROPIC_ENV=(ANTHROPIC_BASE_URL="http://127.0.0.1:${PROXY_PORT}" ANTHROPIC_AUTH_TOKEN="sk-dummy-not-a-real-key")

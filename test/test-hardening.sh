@@ -127,11 +127,14 @@ probe_proxy() {
   CODACY_API_TOKEN="${TOKEN_SENTINEL}" ANTHROPIC_API_KEY="${KEY_SENTINEL}" \
     CODACY_API_BASE_URL=https://api.test.codacy.com \
     /usr/local/bin/entrypoint.sh bash -c \
-    'echo "PROXY_BASE_URL=${ANTHROPIC_BASE_URL:-unset}"; echo "PROXY_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-unset}"; env' >"${f}" 2>/dev/null
+    'echo "PROXY_BASE_URL=${ANTHROPIC_BASE_URL:-unset}"; echo "PROXY_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-unset}"
+     env; cat /proc/*/cmdline 2>/dev/null | tr "\0" "\n"' >"${f}" 2>/dev/null
   out=$(cat "${f}")
 
   printf '%s\n' "${out}" | grep -m1 '^PROXY_BASE_URL=' || echo "PROXY_BASE_URL=missing"
   printf '%s\n' "${out}" | grep -m1 '^PROXY_AUTH_TOKEN=' || echo "PROXY_AUTH_TOKEN=missing"
+  # One grep covers both leak paths: the key appears in neither the agent's environment nor any
+  # argv — /proc/<pid>/cmdline is world-readable, so a key passed to runuser would show up here.
   printf '%s' "${out}" | grep -q "${KEY_SENTINEL}" && echo "PROXY_REAL_KEY=leaked" || echo "PROXY_REAL_KEY=absent"
 
   # comm filter: the root `runuser` parent carries the same argv and would answer for the wrong process.
@@ -285,28 +288,28 @@ check() {
   fi
 }
 
-echo "[1/8] config assertions — what the image ships, not enforcement"
+echo "[1/9] config assertions — what the image ships, not enforcement"
 check "settings.json ships scoped allow list"       POLICY_ALLOW   ok
 check "settings.json ships secret/network deny list" POLICY_DENY   ok
 check "managed-settings.json installed"             MANAGED_FILE   present
 check "managed-settings.json ships bypass lock"     MANAGED_BYPASS disable
 
-echo "[2/8] behavioral — what claude actually does with that config"
+echo "[2/9] behavioral — what claude actually does with that config"
 check "--dangerously-skip-permissions downgraded"   BYPASS_MODE    default
 
-echo "[3/8] behavioral — summary sanitizer run on a crafted summary"
+echo "[3/9] behavioral — summary sanitizer run on a crafted summary"
 check "secret-shaped strings redacted"              SANITIZE_SECRETS gone
 check "summary still valid JSON"                    SANITIZE_JSON    valid
 check "unrelated summary values intact"             SANITIZE_INTACT  ok
 
-echo "[4/8] behavioral — privilege separation"
+echo "[4/9] behavioral — privilege separation"
 check "runner uid"                                  UID_RUNNER     1001
 check "agent uid"                                   UID_AGENT      1002
 check "shared codacy gid"                           GID_CODACY     1003
 check "agent reaches the Codacy CLI via the shim"   SHIM_HELP      ok
 check "launcher rejects other binaries"             SHIM_TRAVERSAL rejected
 
-echo "[5/8] behavioral — entrypoint drops privilege and scrubs the environment"
+echo "[5/9] behavioral — entrypoint drops privilege and scrubs the environment"
 check "pipeline runs as the agent user"             DROP_USER      agent
 check "token value absent from env and argv"        DROP_TOKEN     absent
 check "CODACY_API_TOKEN not in the agent env"       DROP_TOKEN_VAR absent
@@ -319,18 +322,18 @@ check "CODACY_API_BASE_URL staged for the CLI"      CREDS_BASE_URL staged
 check "agent cannot read the staged token"          CREDS_READ     denied
 check "runner can still read the staged token"      CREDS_RUNNER_READ ok
 
-echo "[6/8] behavioral — destructive CLI flags blocked"
+echo "[6/9] behavioral — destructive CLI flags blocked"
 check "every destructive flag form exits 1"         BLOCKED_COUNT  6/6
 check "every rejection explains why"                BLOCKED_MSG    6/6
 
-echo "[7/8] behavioral — CLI shim restricts subcommands to the skill's set"
+echo "[7/9] behavioral — CLI shim restricts subcommands to the skill's set"
 check "codacy-analysis analyze denied"              SUB_ANALYZE    denied
 check "bogus codacy subcommand denied"              SUB_BOGUS      denied
 check "codacy-analysis info reaches the CLI"        SUB_INFO       reached_cli
 check "codacy tools reaches the CLI"                SUB_TOOLS      reached_cli
 check "flag before denied subcommand still denied"  SUB_FLAGFIRST  denied
 
-echo "[8/8] behavioral — cloned .git is out of the agent's reach"
+echo "[8/9] behavioral — cloned .git is out of the agent's reach"
 check "workspace handoff succeeded"                 GIT_HANDOFF      ok
 check "agent owns the checkout"                     GIT_WS_OWNER     agent
 check "workspace root is root-owned, setgid+sticky" GIT_ROOT_PERMS   "root:codacy 3775"
@@ -345,10 +348,10 @@ check "agent can still create files in /workspace"  GIT_WS_WRITE     ok
 check "git status works on a dirty tree"            GIT_STATUS_DIRTY ok
 check "git diff works on a dirty tree"              GIT_DIFF_DIRTY   ok
 
-echo "[8/8] behavioral — Anthropic key stays with the runner-owned proxy"
+echo "[9/9] behavioral — Anthropic key stays with the runner-owned proxy"
 check "agent gets the proxy URL"                    PROXY_BASE_URL   http://127.0.0.1:8118
 check "agent gets a dummy credential"               PROXY_AUTH_TOKEN sk-dummy-not-a-real-key
-check "real key absent from the agent env"          PROXY_REAL_KEY   absent
+check "real key absent from agent env and argv"     PROXY_REAL_KEY   absent
 check "proxy process runs as runner"                PROXY_OWNER      runner
 check "agent cannot read the proxy's environ"       PROXY_PROC_ENV   denied
 check "proxy listens on 127.0.0.1:8118"             PROXY_BIND       ok
