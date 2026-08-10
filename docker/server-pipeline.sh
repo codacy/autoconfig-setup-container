@@ -166,6 +166,9 @@ if [[ -n "${RUN_META}" ]]; then
     "${SUMMARY_PATH}" > "${SUMMARY_PATH}.tmp" && mv "${SUMMARY_PATH}.tmp" "${SUMMARY_PATH}"
 fi
 
+# Must stay after every write to the summary — it redacts in place, not on upload.
+/usr/local/bin/summary-sanitize.sh "${SUMMARY_PATH}"
+
 echo "==> Uploading summary (${SUMMARY_PATH}) to RESULT_UPLOAD_URL"
 HTTP_CODE=$(
   curl --silent --show-error \

@@ -35,13 +35,14 @@ COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
 COPY docker/clone-workspace.sh /usr/local/bin/clone-workspace.sh
 COPY docker/sanitize-workspace.sh /usr/local/bin/sanitize-workspace.sh
+COPY docker/summary-sanitize.sh /usr/local/bin/summary-sanitize.sh
 COPY docker/gemini-policy.toml /etc/gemini-cli/policies/10-codacy-lockdown.toml
 COPY docker/gemini-settings.json /etc/gemini-cli/settings.json
 # gemini skips a policy directory that is not root-owned, and the agent user must not be able to relax either file
 RUN chown -R root:root /etc/gemini-cli \
   && chmod 0755 /etc/gemini-cli /etc/gemini-cli/policies \
   && chmod 0644 /etc/gemini-cli/settings.json /etc/gemini-cli/policies/10-codacy-lockdown.toml \
-  && chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh \
+  && chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh /usr/local/bin/summary-sanitize.sh \
   && printf 'node ALL=(root) NOPASSWD: /bin/chown -R node\\:node /home/node/.codacy\n' \
      > /etc/sudoers.d/node-toolcache \
   && chmod 0440 /etc/sudoers.d/node-toolcache
