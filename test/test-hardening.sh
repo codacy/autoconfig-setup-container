@@ -159,11 +159,30 @@ probe_git_locked() {
   /usr/local/bin/handoff-workspace.sh "${ws}" >/dev/null 2>&1 \
     && echo "GIT_HANDOFF=ok" || echo "GIT_HANDOFF=failed"
   echo "GIT_WS_OWNER=$(stat -c '%U' "${ws}/README.md" 2>/dev/null || echo missing)"
+  echo "GIT_ROOT_PERMS=$(stat -c '%U:%G %a' "${ws}" 2>/dev/null || echo missing)"
   echo "GIT_DIR_OWNER=$(stat -c '%U:%G' "${ws}/.git" 2>/dev/null || echo missing)"
   as_agent bash -c "echo '  fsmonitor = /bin/sh' >> ${ws}/.git/config" 2>/dev/null \
     && echo "GIT_CONFIG_WRITE=allowed" || echo "GIT_CONFIG_WRITE=denied"
+  # Sticky bit: writing .git is not the only way in — swapping it aside for a replacement is.
+  as_agent mv "${ws}/.git" "${ws}/.git.x" 2>/dev/null \
+    && echo "GIT_DIR_RENAME=allowed" || echo "GIT_DIR_RENAME=denied"
+  as_agent rm -rf "${ws}/.git" 2>/dev/null && [[ ! -e "${ws}/.git" ]] \
+    && echo "GIT_DIR_DELETE=allowed" || echo "GIT_DIR_DELETE=denied"
+  # The agent still has to be able to work in the checkout.
   as_agent git -C "${ws}" log -1 --format=%s >/dev/null 2>&1 \
     && echo "GIT_READ=ok" || echo "GIT_READ=denied"
+  as_agent git -C "${ws}" status --porcelain >/dev/null 2>&1 \
+    && echo "GIT_STATUS=ok" || echo "GIT_STATUS=denied"
+  as_agent git -C "${ws}" diff --quiet >/dev/null 2>&1 \
+    && echo "GIT_DIFF=ok" || echo "GIT_DIFF=denied"
+  as_agent touch "${ws}/agent-file" 2>/dev/null \
+    && echo "GIT_WS_WRITE=ok" || echo "GIT_WS_WRITE=denied"
+  # A dirty tree is the real test: git wants to refresh .git/index, which the agent cannot write.
+  as_agent bash -c "echo dirty >> ${ws}/README.md"
+  as_agent git -C "${ws}" status --porcelain >/dev/null 2>&1 \
+    && echo "GIT_STATUS_DIRTY=ok" || echo "GIT_STATUS_DIRTY=denied"
+  as_agent git -C "${ws}" diff --stat >/dev/null 2>&1 \
+    && echo "GIT_DIFF_DIRTY=ok" || echo "GIT_DIFF_DIRTY=denied"
 }
 
 probe_policy_config
@@ -241,9 +260,17 @@ check "every rejection explains why"                BLOCKED_MSG    6/6
 echo "[7/7] behavioral — cloned .git is out of the agent's reach"
 check "workspace handoff succeeded"                 GIT_HANDOFF      ok
 check "agent owns the checkout"                     GIT_WS_OWNER     agent
+check "workspace root is root-owned, setgid+sticky" GIT_ROOT_PERMS   "root:codacy 3775"
 check "agent does not own .git"                     GIT_DIR_OWNER    root:codacy
 check "agent cannot write .git/config"              GIT_CONFIG_WRITE denied
+check "agent cannot rename .git aside"              GIT_DIR_RENAME   denied
+check "agent cannot delete .git"                    GIT_DIR_DELETE   denied
 check "agent can still read the repository"         GIT_READ         ok
+check "agent can still run git status"              GIT_STATUS       ok
+check "agent can still run git diff"                GIT_DIFF         ok
+check "agent can still create files in /workspace"  GIT_WS_WRITE     ok
+check "git status works on a dirty tree"            GIT_STATUS_DIRTY ok
+check "git diff works on a dirty tree"              GIT_DIFF_DIRTY   ok
 
 echo
 echo "==> ${pass} passed, ${fail} failed"

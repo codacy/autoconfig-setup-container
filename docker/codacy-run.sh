@@ -3,7 +3,8 @@
 # runner-only file into the environment (the CLI reads CODACY_API_TOKEN at
 # runtime — no persisted login needed) and execs the real CLI. Invoked as
 # `runner` via the sudo shim; the agent (a different uid) cannot read the token
-# file (600, runner-owned) nor this process's /proc environ.
+# file (root-owned 640, readable only by the single-member group `runner`) nor
+# this process's /proc environ.
 set -euo pipefail
 name="$1"; shift
 # Allowlist the CLI name — the agent reaches this via a sudo rule that permits
