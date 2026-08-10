@@ -6,7 +6,7 @@ services:
     image: codacy/autoconfig
     volumes:
       # Persist tool installations and Trivy DB across runs
-      - codacy-tool-cache:/home/node/.codacy
+      - codacy-tool-cache:/home/runner/.codacy
       # Mount the repo to analyse — override with SOURCE_PATH=/path/to/repo
       - ${SOURCE_PATH:-.}:/workspace
     working_dir: /workspace

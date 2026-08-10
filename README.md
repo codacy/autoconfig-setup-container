@@ -46,7 +46,7 @@ CLAUDE_MODEL=claude-opus-4-8 docker compose run --rm codacy-ai
 
 ```bash
 docker run --rm -it \
-  -v codacy-tool-cache:/home/node/.codacy \
+  -v codacy-tool-cache:/home/runner/.codacy \
   -v /path/to/your/repo:/workspace \
   --env-file .env \
   codacy/autoconfig local-pipeline.sh
@@ -54,7 +54,7 @@ docker run --rm -it \
 
 | Flag                                      | Purpose                                                        |
 |-------------------------------------------|----------------------------------------------------------------|
-| `-v codacy-tool-cache:/home/node/.codacy` | Persistent volume so downloaded tools survive between runs     |
+| `-v codacy-tool-cache:/home/runner/.codacy` | Persistent volume so downloaded tools survive between runs     |
 | `-v /path/to/repo:/workspace`             | Mounts the repository as `/workspace`                          |
 | `--env-file .env`                         | Loads all variables from the `.env` file                       |
 
@@ -76,7 +76,7 @@ Both scripts run the same skill, produce the same summary format, and capture th
 
 ```bash
 docker run --rm -it \
-  -v codacy-tool-cache:/home/node/.codacy \
+  -v codacy-tool-cache:/home/runner/.codacy \
   --env-file .env \
   -e GIT_TOKEN=<token> \
   -e CODACY_PROVIDER=gh \
