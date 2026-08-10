@@ -15,6 +15,28 @@ case "$name" in
   codacy|codacy-analysis) ;;
   *) echo "codacy-run: unauthorized CLI name '$name'" >&2; exit 1 ;;
 esac
+# Subcommand allowlist — the sudo rule permits any arguments, so the CLI-name check alone still lets
+# the agent run `codacy-analysis analyze`, which executes repo tools (e.g. an agent-written
+# eslint.config.js) LOCALLY as `runner` with the token loaded — token theft. Permit only the
+# subcommands the configure-codacy-cloud skill actually calls.
+sub=""
+for arg in "$@"; do
+  case "${arg}" in
+    -*) ;;            # skip flags that precede the subcommand
+    *) sub="${arg}"; break;;
+  esac
+done
+case "$name" in
+  codacy-analysis) allowed="info init config";;
+  codacy)          allowed="repo issues tools tool pattern patterns";;
+esac
+# Empty means flags only (--help/--version): no subcommand runs, nothing executes, so allow it.
+if [ -n "${sub}" ]; then
+  case " ${allowed} " in
+    *" ${sub} "*) ;;
+    *) echo "ERROR: subcommand ${sub} not permitted" >&2; exit 1;;
+  esac
+fi
 # Destructive configuration flags: autoconfig tunes a repository, it never resets one.
 for arg in "$@"; do
   case "${arg}" in
