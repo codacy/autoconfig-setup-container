@@ -136,13 +136,39 @@ probe_shim() {
 
 probe_blocked_flags() {
   local out rc flag blocked=0 msg=0
+  # `repo` is an allowed subcommand, so the flag block — not the subcommand block — is what fires.
   for flag in --force --force=true --unlink-standard --unlink-standard=all --disable-all --disable-all=1; do
-    out=$(as_agent codacy repository-configure "${flag}" 2>&1); rc=$?
+    out=$(as_agent codacy repo "${flag}" 2>&1); rc=$?
     [[ ${rc} -eq 1 ]] && blocked=$((blocked + 1))
     printf '%s' "${out}" | grep -q "flag ${flag} is blocked in the autoconfig container" && msg=$((msg + 1))
   done
   echo "BLOCKED_COUNT=${blocked}/6"
   echo "BLOCKED_MSG=${msg}/6"
+}
+
+# The CLI-name allowlist stops arbitrary binaries; this stops arbitrary SUBCOMMANDS of the real
+# CLIs. `codacy-analysis analyze` runs repo tools locally as runner with the token loaded, so it
+# must be blocked by the shim before it ever reaches the CLI.
+probe_subcommands() {
+  local out
+  # A denied subcommand must be stopped by the shim (exit 1 + message), never reach the CLI.
+  out=$(as_agent codacy-analysis analyze --tool ESLint9 /workspace 2>&1)
+  { [[ $? -eq 1 ]] && printf '%s' "${out}" | grep -q 'subcommand analyze not permitted'; } \
+    && echo "SUB_ANALYZE=denied" || echo "SUB_ANALYZE=allowed"
+  out=$(as_agent codacy delete-everything 2>&1)
+  { [[ $? -eq 1 ]] && printf '%s' "${out}" | grep -q 'subcommand delete-everything not permitted'; } \
+    && echo "SUB_BOGUS=denied" || echo "SUB_BOGUS=allowed"
+
+  # An allowed subcommand must pass the shim and reach the CLI. The CLI then fails (no network/token),
+  # which is fine — we only assert the shim did NOT block it.
+  out=$(as_agent codacy-analysis info 2>&1)
+  printf '%s' "${out}" | grep -q 'not permitted' && echo "SUB_INFO=blocked" || echo "SUB_INFO=reached_cli"
+  out=$(as_agent codacy tools 2>&1)
+  printf '%s' "${out}" | grep -q 'not permitted' && echo "SUB_TOOLS=blocked" || echo "SUB_TOOLS=reached_cli"
+  # Flags before the subcommand must not smuggle a denied one past the scan.
+  out=$(as_agent codacy-analysis --verbose analyze 2>&1)
+  printf '%s' "${out}" | grep -q 'subcommand analyze not permitted' \
+    && echo "SUB_FLAGFIRST=denied" || echo "SUB_FLAGFIRST=allowed"
 }
 
 # Checks the handoff the clone init container performs (clone-workspace.sh calls this script on the
@@ -193,6 +219,7 @@ probe_privilege_drop
 probe_creds_unreadable
 probe_shim
 probe_blocked_flags
+probe_subcommands
 probe_git_locked
 INNER
 )
@@ -220,28 +247,28 @@ check() {
   fi
 }
 
-echo "[1/7] config assertions — what the image ships, not enforcement"
+echo "[1/8] config assertions — what the image ships, not enforcement"
 check "settings.json ships scoped allow list"       POLICY_ALLOW   ok
 check "settings.json ships secret/network deny list" POLICY_DENY   ok
 check "managed-settings.json installed"             MANAGED_FILE   present
 check "managed-settings.json ships bypass lock"     MANAGED_BYPASS disable
 
-echo "[2/7] behavioral — what claude actually does with that config"
+echo "[2/8] behavioral — what claude actually does with that config"
 check "--dangerously-skip-permissions downgraded"   BYPASS_MODE    default
 
-echo "[3/7] behavioral — summary sanitizer run on a crafted summary"
+echo "[3/8] behavioral — summary sanitizer run on a crafted summary"
 check "secret-shaped strings redacted"              SANITIZE_SECRETS gone
 check "summary still valid JSON"                    SANITIZE_JSON    valid
 check "unrelated summary values intact"             SANITIZE_INTACT  ok
 
-echo "[4/7] behavioral — privilege separation"
+echo "[4/8] behavioral — privilege separation"
 check "runner uid"                                  UID_RUNNER     1001
 check "agent uid"                                   UID_AGENT      1002
 check "shared codacy gid"                           GID_CODACY     1003
 check "agent reaches the Codacy CLI via the shim"   SHIM_HELP      ok
 check "launcher rejects other binaries"             SHIM_TRAVERSAL rejected
 
-echo "[5/7] behavioral — entrypoint drops privilege and scrubs the environment"
+echo "[5/8] behavioral — entrypoint drops privilege and scrubs the environment"
 check "pipeline runs as the agent user"             DROP_USER      agent
 check "token value absent from env and argv"        DROP_TOKEN     absent
 check "CODACY_API_TOKEN not in the agent env"       DROP_TOKEN_VAR absent
@@ -253,11 +280,18 @@ check "CODACY_API_BASE_URL staged for the CLI"      CREDS_BASE_URL staged
 check "agent cannot read the staged token"          CREDS_READ     denied
 check "runner can still read the staged token"      CREDS_RUNNER_READ ok
 
-echo "[6/7] behavioral — destructive CLI flags blocked"
+echo "[6/8] behavioral — destructive CLI flags blocked"
 check "every destructive flag form exits 1"         BLOCKED_COUNT  6/6
 check "every rejection explains why"                BLOCKED_MSG    6/6
 
-echo "[7/7] behavioral — cloned .git is out of the agent's reach"
+echo "[7/8] behavioral — CLI shim restricts subcommands to the skill's set"
+check "codacy-analysis analyze denied"              SUB_ANALYZE    denied
+check "bogus codacy subcommand denied"              SUB_BOGUS      denied
+check "codacy-analysis info reaches the CLI"        SUB_INFO       reached_cli
+check "codacy tools reaches the CLI"                SUB_TOOLS      reached_cli
+check "flag before denied subcommand still denied"  SUB_FLAGFIRST  denied
+
+echo "[8/8] behavioral — cloned .git is out of the agent's reach"
 check "workspace handoff succeeded"                 GIT_HANDOFF      ok
 check "agent owns the checkout"                     GIT_WS_OWNER     agent
 check "workspace root is root-owned, setgid+sticky" GIT_ROOT_PERMS   "root:codacy 3775"
