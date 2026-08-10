@@ -103,6 +103,7 @@ probe_distinct_uids() {
 probe_privilege_drop() {
   local out
   out=$(CODACY_API_TOKEN="${TOKEN_SENTINEL}" GEMINI_API_KEY=gemini-test-key \
+    CODACY_API_BASE_URL=https://api.test.codacy.com \
     /usr/local/bin/entrypoint.sh bash -c \
     'echo "DROP_USER=$(id -un)"; env; cat /proc/*/cmdline 2>/dev/null | tr "\0" "\n"' 2>/dev/null)
 
@@ -111,11 +112,14 @@ probe_privilege_drop() {
   printf '%s' "${out}" | grep -q "${TOKEN_SENTINEL}" && echo "DROP_TOKEN=leaked" || echo "DROP_TOKEN=absent"
   printf '%s' "${out}" | grep -q '^CODACY_API_TOKEN=' && echo "DROP_TOKEN_VAR=present" || echo "DROP_TOKEN_VAR=absent"
   printf '%s' "${out}" | grep -q '^GEMINI_API_KEY=gemini-test-key$' && echo "DROP_GEMINI=present" || echo "DROP_GEMINI=missing"
+  printf '%s' "${out}" | grep -q '^CODACY_API_BASE_URL=' && echo "DROP_BASE_URL=present" || echo "DROP_BASE_URL=absent"
 }
 
 # Depends on probe_privilege_drop having staged the token file.
 probe_creds_unreadable() {
   echo "CREDS_PERMS=$(stat -c '%U %a' /run/codacy/codacy.env 2>/dev/null || echo missing)"
+  grep -q '^CODACY_API_BASE_URL=https://api.test.codacy.com$' /run/codacy/codacy.env 2>/dev/null \
+    && echo "CREDS_BASE_URL=staged" || echo "CREDS_BASE_URL=missing"
   as_agent cat /run/codacy/codacy.env >/dev/null 2>&1 && echo "CREDS_READ=readable" || echo "CREDS_READ=denied"
 }
 
@@ -194,7 +198,9 @@ check "pipeline runs as the agent user"             DROP_USER      agent
 check "token value absent from env and argv"        DROP_TOKEN     absent
 check "CODACY_API_TOKEN not in the agent env"       DROP_TOKEN_VAR absent
 check "GEMINI_API_KEY still passed through"         DROP_GEMINI    present
+check "CODACY_API_BASE_URL not in the agent env"    DROP_BASE_URL  absent
 check "staged token file is runner-only"            CREDS_PERMS    "runner 600"
+check "CODACY_API_BASE_URL staged for the CLI"      CREDS_BASE_URL staged
 check "agent cannot read the staged token"          CREDS_READ     denied
 
 echo "[6/6] behavioral — destructive CLI flags blocked"
