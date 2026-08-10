@@ -167,7 +167,10 @@ if [[ -n "${RUN_META}" ]]; then
 fi
 
 # Must stay after every write to the summary — it redacts in place, not on upload.
-/usr/local/bin/summary-sanitize.sh "${SUMMARY_PATH}"
+if ! /usr/local/bin/summary-sanitize.sh "${SUMMARY_PATH}"; then
+  echo "ERROR: summary sanitization failed; refusing to upload" >&2
+  exit ${EXIT_UPLOAD_FAILED}
+fi
 
 echo "==> Uploading summary (${SUMMARY_PATH}) to RESULT_UPLOAD_URL"
 HTTP_CODE=$(
