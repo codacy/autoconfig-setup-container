@@ -31,7 +31,8 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit ${EXIT_BAD_INPUT}
 fi
 
-if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${GEMINI_API_KEY:-}" ]]; then
+# The real Anthropic key stays with the proxy (runner); ANTHROPIC_BASE_URL is what says Claude is wired up.
+if [[ -z "${ANTHROPIC_BASE_URL:-}" && -z "${GEMINI_API_KEY:-}" ]]; then
   echo "ERROR: missing required env vars: ANTHROPIC_API_KEY or GEMINI_API_KEY (at least one must be set)" >&2
   exit ${EXIT_BAD_INPUT}
 fi
@@ -54,7 +55,7 @@ mkdir -p "$(dirname "${SUMMARY_PATH}")"
 AGENT_ENV=(env -u RESULT_UPLOAD_URL)
 AGENT_ERROR=""
 
-if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+if [[ -n "${ANTHROPIC_BASE_URL:-}" ]]; then
   CLAUDE_STREAM_FILE=$(mktemp)
   RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 

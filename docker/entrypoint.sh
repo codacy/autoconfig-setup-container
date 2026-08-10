@@ -20,6 +20,12 @@ if [ -z "${CODACY_API_TOKEN:-}" ]; then
   echo "ERROR: missing required env vars: CODACY_API_TOKEN" >&2
   exit 1
 fi
+# The pipelines check this too, but the agent never sees ANTHROPIC_API_KEY — fail here, where the
+# real key is still visible, rather than after the privilege drop.
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${GEMINI_API_KEY:-}" ]; then
+  echo "ERROR: missing required env vars: ANTHROPIC_API_KEY or GEMINI_API_KEY (at least one must be set)" >&2
+  exit 1
+fi
 mkdir -p /run/codacy
 chown root:runner /run/codacy
 chmod 750 /run/codacy
@@ -37,6 +43,27 @@ fi
 chown root:runner /run/codacy/codacy.env
 chmod 640 /run/codacy/codacy.env
 
+# Anthropic auth proxy: it runs as runner and holds the real key in its own environment, so the
+# agent talks to 127.0.0.1 with a dummy credential and never has a key it could exfiltrate.
+ANTHROPIC_ENV=()
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  PROXY_PORT="${ANTHROPIC_PROXY_PORT:-8118}"
+  # env -i keeps CODACY_API_TOKEN out of the proxy's /proc/<pid>/environ as well.
+  runuser -u runner -- env -i PATH="${PATH}" \
+    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" ANTHROPIC_PROXY_PORT="${PROXY_PORT}" \
+    node /usr/local/bin/anthropic-proxy.js &
+  proxy_up=0
+  for _ in $(seq 30); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/${PROXY_PORT}") 2>/dev/null; then proxy_up=1; break; fi
+    sleep 0.1
+  done
+  if [ "${proxy_up}" -ne 1 ]; then
+    echo "ERROR: anthropic proxy did not bind 127.0.0.1:${PROXY_PORT}" >&2
+    exit 1
+  fi
+  ANTHROPIC_ENV=(ANTHROPIC_BASE_URL="http://127.0.0.1:${PROXY_PORT}" ANTHROPIC_AUTH_TOKEN="sk-dummy-not-a-real-key")
+fi
+
 # Both users share the group `codacy`, so a group-writable file is readable and writable by the
 # agent and by the runner-run CLIs alike.
 umask 002
@@ -48,7 +75,7 @@ exec runuser -u agent -- env -i \
   PATH="${PATH}" HOME=/home/agent USER=agent TERM="${TERM:-xterm}" \
   RESULT_UPLOAD_URL="${RESULT_UPLOAD_URL:-}" \
   CODACY_PROVIDER="${CODACY_PROVIDER:-}" CODACY_ORG_NAME="${CODACY_ORG_NAME:-}" CODACY_REPO_NAME="${CODACY_REPO_NAME:-}" \
-  ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
+  "${ANTHROPIC_ENV[@]}" GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
   CLAUDE_MODEL="${CLAUDE_MODEL:-}" GEMINI_MODEL="${GEMINI_MODEL:-}" \
   WORKSPACE_DIR="${WORKSPACE_DIR:-}" AUTOCONFIG_SUMMARY_PATH="${AUTOCONFIG_SUMMARY_PATH:-}" \
   AUTOCONFIG_AGENT_TIMEOUT="${AUTOCONFIG_AGENT_TIMEOUT:-}" AUTOCONFIG_MAX_SUMMARY_BYTES="${AUTOCONFIG_MAX_SUMMARY_BYTES:-}" \

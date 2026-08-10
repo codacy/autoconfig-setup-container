@@ -23,6 +23,7 @@ set -uo pipefail
 SETTINGS=/home/agent/.claude/settings.json
 MANAGED=/etc/claude-code/managed-settings.json
 TOKEN_SENTINEL=codacy-token-sentinel-9f3a
+KEY_SENTINEL=sk-ant-api03-proxy-sentinel-4d7b
 
 # The payload runs as root (the image's default user); anything that must see what the agent sees
 # runs through here, with the same HOME the entrypoint hands it.
@@ -102,10 +103,12 @@ probe_distinct_uids() {
 # Runs the real entrypoint with a sentinel token and reports what the agent inherits.
 probe_privilege_drop() {
   local out
-  out=$(CODACY_API_TOKEN="${TOKEN_SENTINEL}" GEMINI_API_KEY=gemini-test-key \
+  # Gemini-only run: no Anthropic key, so no proxy and no ANTHROPIC_* in the agent environment.
+  out=$(env -u ANTHROPIC_API_KEY CODACY_API_TOKEN="${TOKEN_SENTINEL}" GEMINI_API_KEY=gemini-test-key \
     CODACY_API_BASE_URL=https://api.test.codacy.com \
     /usr/local/bin/entrypoint.sh bash -c \
-    'echo "DROP_USER=$(id -un)"; env; cat /proc/*/cmdline 2>/dev/null | tr "\0" "\n"' 2>/dev/null)
+    'echo "DROP_USER=$(id -un)"; echo "DROP_ANTHROPIC_VARS=$(env | grep -c "^ANTHROPIC_")"
+     env; cat /proc/*/cmdline 2>/dev/null | tr "\0" "\n"' 2>/dev/null)
 
   printf '%s\n' "${out}" | grep -m1 '^DROP_USER=' || echo "DROP_USER=missing"
   # One grep covers both leak paths: the sentinel appears in neither the environment nor any argv.
@@ -113,6 +116,40 @@ probe_privilege_drop() {
   printf '%s' "${out}" | grep -q '^CODACY_API_TOKEN=' && echo "DROP_TOKEN_VAR=present" || echo "DROP_TOKEN_VAR=absent"
   printf '%s' "${out}" | grep -q '^GEMINI_API_KEY=gemini-test-key$' && echo "DROP_GEMINI=present" || echo "DROP_GEMINI=missing"
   printf '%s' "${out}" | grep -q '^CODACY_API_BASE_URL=' && echo "DROP_BASE_URL=present" || echo "DROP_BASE_URL=absent"
+  printf '%s\n' "${out}" | grep -m1 '^DROP_ANTHROPIC_VARS=' || echo "DROP_ANTHROPIC_VARS=missing"
+}
+
+# Anthropic run: the entrypoint starts the auth proxy as runner and hands the agent a dummy credential.
+probe_proxy() {
+  local out pid p f=/tmp/proxy-drop.out
+  # Captured through a file: the proxy inherits stdout and outlives the entrypoint, so $() would
+  # block forever on the still-open pipe.
+  CODACY_API_TOKEN="${TOKEN_SENTINEL}" ANTHROPIC_API_KEY="${KEY_SENTINEL}" \
+    CODACY_API_BASE_URL=https://api.test.codacy.com \
+    /usr/local/bin/entrypoint.sh bash -c \
+    'echo "PROXY_BASE_URL=${ANTHROPIC_BASE_URL:-unset}"; echo "PROXY_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-unset}"; env' >"${f}" 2>/dev/null
+  out=$(cat "${f}")
+
+  printf '%s\n' "${out}" | grep -m1 '^PROXY_BASE_URL=' || echo "PROXY_BASE_URL=missing"
+  printf '%s\n' "${out}" | grep -m1 '^PROXY_AUTH_TOKEN=' || echo "PROXY_AUTH_TOKEN=missing"
+  printf '%s' "${out}" | grep -q "${KEY_SENTINEL}" && echo "PROXY_REAL_KEY=leaked" || echo "PROXY_REAL_KEY=absent"
+
+  # comm filter: the root `runuser` parent carries the same argv and would answer for the wrong process.
+  for p in /proc/[0-9]*; do
+    grep -qa anthropic-proxy.js "${p}/cmdline" 2>/dev/null || continue
+    [[ "$(cat "${p}/comm" 2>/dev/null)" == node ]] && pid="${p#/proc/}" && break
+  done
+  echo "PROXY_OWNER=$(stat -c '%U' "/proc/${pid:-none}" 2>/dev/null || echo missing)"
+  as_agent cat "/proc/${pid:-none}/environ" >/dev/null 2>&1 \
+    && echo "PROXY_PROC_ENV=readable" || echo "PROXY_PROC_ENV=denied"
+
+  # /dev/tcp, not curl: the agent's deny list bars curl and the probe should use what it really has.
+  as_agent bash -c '(exec 3<>/dev/tcp/127.0.0.1/8118)' 2>/dev/null \
+    && echo "PROXY_BIND=ok" || echo "PROXY_BIND=closed"
+  # --network none: the upstream leg cannot resolve, so a 502 from the proxy itself proves the hop.
+  echo "PROXY_HOP=$(as_agent bash -c 'exec 3<>/dev/tcp/127.0.0.1/8118
+    printf "POST /v1/messages HTTP/1.1\r\nHost: api.anthropic.com\r\nAuthorization: Bearer sk-dummy-not-a-real-key\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" >&3
+    head -c 12 <&3' 2>/dev/null || echo unreachable)"
 }
 
 # Depends on probe_privilege_drop having staged the token file.
@@ -221,6 +258,7 @@ probe_shim
 probe_blocked_flags
 probe_subcommands
 probe_git_locked
+probe_proxy
 INNER
 )
 
@@ -273,6 +311,7 @@ check "pipeline runs as the agent user"             DROP_USER      agent
 check "token value absent from env and argv"        DROP_TOKEN     absent
 check "CODACY_API_TOKEN not in the agent env"       DROP_TOKEN_VAR absent
 check "GEMINI_API_KEY still passed through"         DROP_GEMINI    present
+check "Gemini-only run injects no ANTHROPIC_* var"  DROP_ANTHROPIC_VARS 0
 check "CODACY_API_BASE_URL not in the agent env"    DROP_BASE_URL  absent
 check "staged token file is root-owned, runner-read" CREDS_PERMS   "root runner 640"
 check "staged token dir is root-owned, runner-read" CREDS_DIR_PERMS "root runner 750"
@@ -305,6 +344,15 @@ check "agent can still run git diff"                GIT_DIFF         ok
 check "agent can still create files in /workspace"  GIT_WS_WRITE     ok
 check "git status works on a dirty tree"            GIT_STATUS_DIRTY ok
 check "git diff works on a dirty tree"              GIT_DIFF_DIRTY   ok
+
+echo "[8/8] behavioral — Anthropic key stays with the runner-owned proxy"
+check "agent gets the proxy URL"                    PROXY_BASE_URL   http://127.0.0.1:8118
+check "agent gets a dummy credential"               PROXY_AUTH_TOKEN sk-dummy-not-a-real-key
+check "real key absent from the agent env"          PROXY_REAL_KEY   absent
+check "proxy process runs as runner"                PROXY_OWNER      runner
+check "agent cannot read the proxy's environ"       PROXY_PROC_ENV   denied
+check "proxy listens on 127.0.0.1:8118"             PROXY_BIND       ok
+check "agent request reaches the proxy"             PROXY_HOP        "HTTP/1.1 502"
 
 echo
 echo "==> ${pass} passed, ${fail} failed"

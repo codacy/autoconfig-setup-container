@@ -61,6 +61,7 @@ COPY docker/clone-workspace.sh /usr/local/bin/clone-workspace.sh
 COPY docker/sanitize-workspace.sh /usr/local/bin/sanitize-workspace.sh
 COPY docker/handoff-workspace.sh /usr/local/bin/handoff-workspace.sh
 COPY docker/summary-sanitize.sh /usr/local/bin/summary-sanitize.sh
+COPY docker/anthropic-proxy.js /usr/local/bin/anthropic-proxy.js
 # Root-owned so the agent user cannot relax it at runtime
 COPY docker/managed-settings.json /etc/claude-code/managed-settings.json
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh /usr/local/bin/handoff-workspace.sh /usr/local/bin/summary-sanitize.sh \
