@@ -83,9 +83,11 @@ docker run --rm -it \
   -e CODACY_ORG_NAME=your-org \
   -e CODACY_REPO_NAME=your-repo \
   -e RESULT_UPLOAD_URL=https://httpbin.org/put \
-  --entrypoint /usr/local/bin/server-pipeline.sh \
-  codacy/autoconfig
+  codacy/autoconfig server-pipeline.sh
 ```
+
+Pass the script as the command, not as `--entrypoint`: the image entrypoint is what stages the
+Codacy token and drops privilege to the `agent` user, and skipping it skips both.
 
 `httpbin.org/put` accepts any PUT and is useful for smoke-testing the upload step.
 

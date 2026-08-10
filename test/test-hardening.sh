@@ -117,10 +117,14 @@ probe_privilege_drop() {
 
 # Depends on probe_privilege_drop having staged the token file.
 probe_creds_unreadable() {
-  echo "CREDS_PERMS=$(stat -c '%U %a' /run/codacy/codacy.env 2>/dev/null || echo missing)"
-  grep -q '^CODACY_API_BASE_URL=https://api.test.codacy.com$' /run/codacy/codacy.env 2>/dev/null \
+  echo "CREDS_PERMS=$(stat -c '%U %G %a' /run/codacy/codacy.env 2>/dev/null || echo missing)"
+  echo "CREDS_DIR_PERMS=$(stat -c '%U %G %a' /run/codacy 2>/dev/null || echo missing)"
+  grep -q '^export CODACY_API_BASE_URL=https://api.test.codacy.com$' /run/codacy/codacy.env 2>/dev/null \
     && echo "CREDS_BASE_URL=staged" || echo "CREDS_BASE_URL=missing"
   as_agent cat /run/codacy/codacy.env >/dev/null 2>&1 && echo "CREDS_READ=readable" || echo "CREDS_READ=denied"
+  # The CLI is useless if runner lost its read along the way.
+  runuser -u runner -- cat /run/codacy/codacy.env >/dev/null 2>&1 \
+    && echo "CREDS_RUNNER_READ=ok" || echo "CREDS_RUNNER_READ=denied"
 }
 
 probe_shim() {
@@ -131,11 +135,35 @@ probe_shim() {
 }
 
 probe_blocked_flags() {
-  local out rc
-  out=$(as_agent codacy repository-configure --force 2>&1); rc=$?
-  echo "BLOCKED_RC=${rc}"
-  printf '%s' "${out}" | grep -q 'blocked in the autoconfig container' \
-    && echo "BLOCKED_MSG=ok" || echo "BLOCKED_MSG=missing"
+  local out rc flag blocked=0 msg=0
+  for flag in --force --force=true --unlink-standard --unlink-standard=all --disable-all --disable-all=1; do
+    out=$(as_agent codacy repository-configure "${flag}" 2>&1); rc=$?
+    [[ ${rc} -eq 1 ]] && blocked=$((blocked + 1))
+    printf '%s' "${out}" | grep -q "flag ${flag} is blocked in the autoconfig container" && msg=$((msg + 1))
+  done
+  echo "BLOCKED_COUNT=${blocked}/6"
+  echo "BLOCKED_MSG=${msg}/6"
+}
+
+# Checks the handoff the clone init container performs (clone-workspace.sh calls this script on the
+# checkout it produced): the agent owns the tree but cannot touch .git, where git config carries
+# settings the runner-side CLIs would execute.
+probe_git_locked() {
+  local ws=/workspace
+  rm -rf /tmp/src "${ws:?}"/* "${ws:?}"/.[!.]* 2>/dev/null
+  git init -q /tmp/src && git -C /tmp/src config user.email t@codacy.com && git -C /tmp/src config user.name t
+  echo fixture > /tmp/src/README.md
+  git -C /tmp/src add -A && git -C /tmp/src commit -qm fixture
+  git clone -q /tmp/src "${ws}"
+
+  /usr/local/bin/handoff-workspace.sh "${ws}" >/dev/null 2>&1 \
+    && echo "GIT_HANDOFF=ok" || echo "GIT_HANDOFF=failed"
+  echo "GIT_WS_OWNER=$(stat -c '%U' "${ws}/README.md" 2>/dev/null || echo missing)"
+  echo "GIT_DIR_OWNER=$(stat -c '%U:%G' "${ws}/.git" 2>/dev/null || echo missing)"
+  as_agent bash -c "echo '  fsmonitor = /bin/sh' >> ${ws}/.git/config" 2>/dev/null \
+    && echo "GIT_CONFIG_WRITE=allowed" || echo "GIT_CONFIG_WRITE=denied"
+  as_agent git -C "${ws}" log -1 --format=%s >/dev/null 2>&1 \
+    && echo "GIT_READ=ok" || echo "GIT_READ=denied"
 }
 
 probe_policy_config
@@ -146,6 +174,7 @@ probe_privilege_drop
 probe_creds_unreadable
 probe_shim
 probe_blocked_flags
+probe_git_locked
 INNER
 )
 
@@ -172,40 +201,49 @@ check() {
   fi
 }
 
-echo "[1/6] config assertions — what the image ships, not enforcement"
+echo "[1/7] config assertions — what the image ships, not enforcement"
 check "settings.json ships scoped allow list"       POLICY_ALLOW   ok
 check "settings.json ships secret/network deny list" POLICY_DENY   ok
 check "managed-settings.json installed"             MANAGED_FILE   present
 check "managed-settings.json ships bypass lock"     MANAGED_BYPASS disable
 
-echo "[2/6] behavioral — what claude actually does with that config"
+echo "[2/7] behavioral — what claude actually does with that config"
 check "--dangerously-skip-permissions downgraded"   BYPASS_MODE    default
 
-echo "[3/6] behavioral — summary sanitizer run on a crafted summary"
+echo "[3/7] behavioral — summary sanitizer run on a crafted summary"
 check "secret-shaped strings redacted"              SANITIZE_SECRETS gone
 check "summary still valid JSON"                    SANITIZE_JSON    valid
 check "unrelated summary values intact"             SANITIZE_INTACT  ok
 
-echo "[4/6] behavioral — privilege separation"
+echo "[4/7] behavioral — privilege separation"
 check "runner uid"                                  UID_RUNNER     1001
 check "agent uid"                                   UID_AGENT      1002
 check "shared codacy gid"                           GID_CODACY     1003
 check "agent reaches the Codacy CLI via the shim"   SHIM_HELP      ok
 check "launcher rejects other binaries"             SHIM_TRAVERSAL rejected
 
-echo "[5/6] behavioral — entrypoint drops privilege and scrubs the environment"
+echo "[5/7] behavioral — entrypoint drops privilege and scrubs the environment"
 check "pipeline runs as the agent user"             DROP_USER      agent
 check "token value absent from env and argv"        DROP_TOKEN     absent
 check "CODACY_API_TOKEN not in the agent env"       DROP_TOKEN_VAR absent
 check "GEMINI_API_KEY still passed through"         DROP_GEMINI    present
 check "CODACY_API_BASE_URL not in the agent env"    DROP_BASE_URL  absent
-check "staged token file is runner-only"            CREDS_PERMS    "runner 600"
+check "staged token file is root-owned, runner-read" CREDS_PERMS   "root runner 640"
+check "staged token dir is root-owned, runner-read" CREDS_DIR_PERMS "root runner 750"
 check "CODACY_API_BASE_URL staged for the CLI"      CREDS_BASE_URL staged
 check "agent cannot read the staged token"          CREDS_READ     denied
+check "runner can still read the staged token"      CREDS_RUNNER_READ ok
 
-echo "[6/6] behavioral — destructive CLI flags blocked"
-check "--force rejected by the launcher"            BLOCKED_RC     1
-check "rejection explains why"                      BLOCKED_MSG    ok
+echo "[6/7] behavioral — destructive CLI flags blocked"
+check "every destructive flag form exits 1"         BLOCKED_COUNT  6/6
+check "every rejection explains why"                BLOCKED_MSG    6/6
+
+echo "[7/7] behavioral — cloned .git is out of the agent's reach"
+check "workspace handoff succeeded"                 GIT_HANDOFF      ok
+check "agent owns the checkout"                     GIT_WS_OWNER     agent
+check "agent does not own .git"                     GIT_DIR_OWNER    root:codacy
+check "agent cannot write .git/config"              GIT_CONFIG_WRITE denied
+check "agent can still read the repository"         GIT_READ         ok
 
 echo
 echo "==> ${pass} passed, ${fail} failed"

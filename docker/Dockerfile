@@ -25,8 +25,11 @@ RUN npm install -g \
 # runner (1001): holds the Codacy token and runs the real Codacy CLIs.
 # agent  (1002): runs claude/gemini and the pipeline; holds no credential.
 # Shared group `codacy` (1003) lets both read and write /workspace/.codacy.
+# Group `runner` (1004) has exactly one member, so the staged credential file can be root-owned and
+# readable by runner alone — the shared group `codacy` would also hand it to the agent.
 RUN groupadd -g 1003 codacy \
-  && useradd -m -u 1001 -g codacy runner \
+  && groupadd -g 1004 runner \
+  && useradd -m -u 1001 -g codacy -G runner runner \
   && useradd -m -u 1002 -g codacy agent \
   # Relocate the real Codacy CLIs to <name>-real in the SAME dir so their relative npm symlinks
   # stay valid; the shims below take over the original names.
@@ -56,10 +59,11 @@ COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
 COPY docker/clone-workspace.sh /usr/local/bin/clone-workspace.sh
 COPY docker/sanitize-workspace.sh /usr/local/bin/sanitize-workspace.sh
+COPY docker/handoff-workspace.sh /usr/local/bin/handoff-workspace.sh
 COPY docker/summary-sanitize.sh /usr/local/bin/summary-sanitize.sh
 # Root-owned so the agent user cannot relax it at runtime
 COPY docker/managed-settings.json /etc/claude-code/managed-settings.json
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh /usr/local/bin/summary-sanitize.sh \
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh /usr/local/bin/handoff-workspace.sh /usr/local/bin/summary-sanitize.sh \
   # The agent may run ONLY the runner-side CLI launcher, and only as runner.
   && printf 'agent ALL=(runner) NOPASSWD: /usr/local/bin/codacy-run\n' \
      > /etc/sudoers.d/agent-cli \

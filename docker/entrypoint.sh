@@ -21,24 +21,24 @@ if [ -z "${CODACY_API_TOKEN:-}" ]; then
   exit 1
 fi
 mkdir -p /run/codacy
-printf 'CODACY_API_TOKEN=%s\n' "${CODACY_API_TOKEN}" > /run/codacy/codacy.env
+chown root:runner /run/codacy
+chmod 750 /run/codacy
+# 077 closes the window between creation and chmod, in which the file would otherwise be 644.
+umask 077
+# %q quotes the value, so a token containing shell metacharacters cannot turn into a command when
+# codacy-run sources this file.
+printf 'export CODACY_API_TOKEN=%q\n' "${CODACY_API_TOKEN}" > /run/codacy/codacy.env
 # Only the Codacy CLI reads the API host, and it runs as runner — so it travels with the token
 # rather than through the agent's environment.
 if [ -n "${CODACY_API_BASE_URL:-}" ]; then
-  printf 'CODACY_API_BASE_URL=%s\n' "${CODACY_API_BASE_URL}" >> /run/codacy/codacy.env
+  printf 'export CODACY_API_BASE_URL=%q\n' "${CODACY_API_BASE_URL}" >> /run/codacy/codacy.env
 fi
-chown -R runner:codacy /run/codacy
-chmod 700 /run/codacy
-chmod 600 /run/codacy/codacy.env
+# root owns it, runner only reads it: a compromised runner cannot rewrite or widen the file.
+chown root:runner /run/codacy/codacy.env
+chmod 640 /run/codacy/codacy.env
 
-# The agent and the runner-run CLIs must read and write each other's files under /workspace: both
-# share the group `codacy`, setgid makes new files inherit it, umask 002 keeps them group-writable.
-# Only in k8s, where /workspace is a pod volume — locally it is the developer's bind-mounted
-# repository, whose ownership is not ours to rewrite.
-if [[ -n "${RUNNING_IN_K8S:-}" ]]; then
-  chown agent:codacy /workspace 2>/dev/null || true
-  chmod 2775 /workspace 2>/dev/null || true
-fi
+# Both users share the group `codacy`, so a group-writable file is readable and writable by the
+# agent and by the runner-run CLIs alike.
 umask 002
 
 # Drop to the agent with a clean environment: `env -i` clears everything, only the non-secret vars
@@ -46,7 +46,6 @@ umask 002
 # reaches it only through the sudo shim, which runs the CLI as runner.
 exec runuser -u agent -- env -i \
   PATH="${PATH}" HOME=/home/agent USER=agent TERM="${TERM:-xterm}" \
-  RUNNING_IN_K8S="${RUNNING_IN_K8S:-}" \
   RESULT_UPLOAD_URL="${RESULT_UPLOAD_URL:-}" \
   CODACY_PROVIDER="${CODACY_PROVIDER:-}" CODACY_ORG_NAME="${CODACY_ORG_NAME:-}" CODACY_REPO_NAME="${CODACY_REPO_NAME:-}" \
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
