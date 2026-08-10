@@ -16,7 +16,8 @@ mkdir -p "$(dirname "${SUMMARY_PATH}")"
 
 AGENT_ERROR=""
 
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+# The real Anthropic key stays with the proxy (runner); ANTHROPIC_BASE_URL is what says Claude is wired up.
+if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
   CLAUDE_STREAM_FILE=$(mktemp)
   RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
