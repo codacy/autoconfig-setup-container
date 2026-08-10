@@ -5,6 +5,10 @@
 
 set -uo pipefail
 
+# The agent container runs as `agent` and the Codacy CLIs as `runner`; both must be able to edit
+# what this container clones.
+umask 002
+
 # shellcheck source=docker/agent-lib.sh
 source /usr/local/bin/agent-lib.sh
 
@@ -62,6 +66,8 @@ if ! /usr/local/bin/sanitize-workspace.sh "${WORKSPACE}"; then
   echo "ERROR: failed to sanitize the cloned workspace; refusing to launch the agent" >&2
   exit ${EXIT_BAD_INPUT}
 fi
+
+chown -R agent:codacy "${WORKSPACE}" 2>/dev/null || true
 
 echo "==> Workspace ready at ${WORKSPACE}"
 exit ${EXIT_OK}
