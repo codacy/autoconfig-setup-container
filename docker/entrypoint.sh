@@ -5,6 +5,8 @@ set -e
 
 # The clone init container runs before any agent exists and needs GIT_TOKEN, which the scrub below
 # would strip. It exits before the agent container starts, so let it through untouched.
+# Production bypasses this entrypoint entirely (the AAM pod spec overrides the init container's
+# command); this keeps a plain `docker run <image> clone-workspace.sh` working the same way.
 case "${1:-}" in
   clone-workspace.sh | /usr/local/bin/clone-workspace.sh) exec "$@" ;;
 esac
@@ -20,6 +22,11 @@ if [ -z "${CODACY_API_TOKEN:-}" ]; then
 fi
 mkdir -p /run/codacy
 printf 'CODACY_API_TOKEN=%s\n' "${CODACY_API_TOKEN}" > /run/codacy/codacy.env
+# Only the Codacy CLI reads the API host, and it runs as runner — so it travels with the token
+# rather than through the agent's environment.
+if [ -n "${CODACY_API_BASE_URL:-}" ]; then
+  printf 'CODACY_API_BASE_URL=%s\n' "${CODACY_API_BASE_URL}" >> /run/codacy/codacy.env
+fi
 chown -R runner:codacy /run/codacy
 chmod 700 /run/codacy
 chmod 600 /run/codacy/codacy.env
