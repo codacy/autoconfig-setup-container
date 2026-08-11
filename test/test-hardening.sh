@@ -34,7 +34,9 @@ echo "POLICY_MODE=$(stat -c '%u:%a' "${POLICY_DIR}/10-codacy-lockdown.toml" || e
 echo "POLICY_DIR_MODE=$(stat -c '%u:%a' "${POLICY_DIR}" || echo unreadable)"
 echo "SETTINGS_MODE=$(stat -c '%u:%a' "${SETTINGS}" || echo unreadable)"
 echo "SETTINGS=$(jq -r 'if .security.blockGitExtensions == true
-  and ((.mcp.allowed // ["unset"]) | length) == 0 then "ok" else tojson end' "${SETTINGS}" || echo unreadable)"
+  and ((.mcp.allowed // ["unset"]) | length) == 0
+  and .model.maxSessionTurns == 100
+  and .privacy.usageStatisticsEnabled == false then "ok" else tojson end' "${SETTINGS}" || echo unreadable)"
 
 # GEMINI_API_KEY really is in the agent's environment, so both Google key shapes are staged here.
 # A 40-char hex commit SHA is legitimate summary content and must survive.
@@ -116,6 +118,43 @@ echo "EGRESS_CANARY=$([[ -f /tmp/egress-canary ]] && echo reached || echo blocke
 # No `case` — host bash 3.2 miscounts parens inside a heredoc in a command substitution.
 cli=$(verdict run_shell_command 'codacy --version')
 echo "ALLOW_CODACY_CLI=$([[ ${cli} == policy_violation || ${cli} == no_* ]] && echo blocked || echo allowed)"
+
+# --- turn cap -------------------------------------------------------------------------------
+# Same keyless gateway trick, but this one never answers with text, so nothing except the turn cap
+# can end the run. It asks for web_fetch, which the admin policy already dropped from the registry,
+# so a turn costs one local request and executes nothing. The prompt varies per turn so the CLI's
+# loop detector does not stop the run before the cap does.
+TURN_PORT=8100
+cat > /tmp/turn-gateway.js <<JS
+const http = require('http');
+let requests = 0;
+http.createServer((req, res) => {
+  req.on('data', () => {});
+  req.on('end', () => {
+    requests += 1;
+    const part = {functionCall: {name: 'web_fetch', args: {prompt: 'loop ' + requests}}};
+    res.writeHead(200, {'content-type': 'text/event-stream'});
+    res.end('data: ' + JSON.stringify({candidates: [{content: {role: 'model', parts: [part]}, finishReason: 'STOP'}]}) + '\n\n');
+  });
+}).listen(${TURN_PORT}, '127.0.0.1');
+JS
+node /tmp/turn-gateway.js &
+turn_gw=$!
+sleep 1
+mkdir -p /tmp/turn-ws && chown agent:codacy /tmp/turn-ws
+cd /tmp/turn-ws || exit 1
+# As `agent`, like every other gemini probe: the cap comes from the admin settings, and only the
+# agent's view of those settings is the one production runs under.
+GEMINI_API_KEY=fake-test-key GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:${TURN_PORT}" \
+  as_agent timeout 300 gemini -y --skip-trust -m gemini-2.5-flash -o stream-json -p "go" \
+  </dev/null >/tmp/turn.json 2>/dev/null
+turn_rc=$?
+kill "${turn_gw}" 2>/dev/null
+# 53 is FatalTurnLimitedError. One tool call per turn, so the terminal stats count the turns that
+# ran — the gateway's own request count is not it, the CLI also retries and makes side calls.
+echo "TURN_CAP_EXIT=${turn_rc}"
+echo "TURN_CAP_ERROR=$(jq -rs 'map(select(.type == "result")) | last | .error.type // "none"' /tmp/turn.json 2>/dev/null)"
+echo "TURN_CAP_TURNS=$(jq -rs 'map(select(.type == "result")) | last | .stats.tool_calls // "none"' /tmp/turn.json 2>/dev/null)"
 
 # --- privilege separation -------------------------------------------------------------------
 echo "UID_RUNNER=$(id -u runner 2>/dev/null || echo missing)"
@@ -263,6 +302,9 @@ DENY_SHELL_CURL=policy_violation
 DENY_WEB_FETCH=tool_not_registered
 EGRESS_CANARY=blocked
 ALLOW_CODACY_CLI=allowed
+TURN_CAP_EXIT=53
+TURN_CAP_ERROR=FatalTurnLimitedError
+TURN_CAP_TURNS=100
 UID_RUNNER=1001
 UID_AGENT=1002
 GID_CODACY=1003

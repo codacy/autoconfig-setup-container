@@ -213,8 +213,11 @@ checks that against a fake local Gemini gateway: `-y` does auto-approve an unlis
 `curl` comes back `policy_violation`, `web_fetch` is not even registered as a tool, no egress attempt
 lands, and `codacy --version` still gets through.
 
-The system-scope settings file adds `security.blockGitExtensions: true` and an empty `mcp.allowed`
-list (`docker/gemini-settings.json:1`).
+The system-scope settings file adds four keys (`docker/gemini-settings.json:1`):
+`security.blockGitExtensions: true`, an empty `mcp.allowed` list, `model.maxSessionTurns: 100`, and
+`privacy.usageStatisticsEnabled: false`. Because the file is system-scope, a `.gemini/settings.json`
+inside the analysed repository cannot raise any of them, and there is no env var or CLI flag for the
+turn cap either.
 
 **This is defence in depth, not the boundary.** Upstream documentation for the Gemini CLI describes
 its policy and approval machinery as a safety guardrail rather than a foolproof security boundary
@@ -222,6 +225,35 @@ its policy and approval machinery as a safety guardrail rather than a foolproof 
 prefix rules do not match is a bug class, not a surprise. The OS
 layer — separate users, an unreachable token, a read-only `.git`, and the shim allowlists — is what
 actually contains a hostile repository. The admin policy raises the cost of the first step.
+
+## Run limits and telemetry (Gemini only)
+
+`model.maxSessionTurns: 100` bounds the run at 100 turns, a turn being one model request plus its
+tool calls. The default is `-1`, unlimited, so without it the 70-minute wall-clock timeout would be
+the only thing ending a runaway or injected tool loop. An instrumented run against a small repository
+(5 files, 3 languages) used 23 turns in 6m45s, which puts the cap at roughly 4.3× a measured run and
+about 29 minutes of the timeout window.
+
+The cap bounds **loops, not spend**. Cost per turn is not constant — a turn that reads several large
+files costs far more than one that answers — so this is an order-of-magnitude guard against a run
+that never stops, not a budget.
+
+Tripping it is a hard stop, not a graceful wind-down. The CLI emits a `FatalTurnLimitedError` result
+and exits 53; `derive_outcome` has no case for 53, so the catch-all maps it to `EXIT_AGENT_ERROR` (4)
+with reason "the agent exited with code 53" (`docker/agent-lib.sh:83-87`). The skill writes the
+configuration summary as its last step, so a run cut off at the cap has not written one: what AAM
+receives is the stub the pipeline uploads in that case — `{}` plus the `outcome` and `run` blocks
+(`docker/server-pipeline.sh:152-166`), with none of the configuration findings. That harsh failure
+mode is why the value is generous rather than close to the measured run.
+
+`privacy.usageStatisticsEnabled: false` turns off the CLI's telemetry, which otherwise posts once per
+session to Google's Clearcut endpoint (`play.googleapis.com/log`) and sends an install-fingerprint
+header. It also removes one destination from the egress allowlist that has to be maintained outside
+this repository.
+
+`test/test-hardening.sh` asserts the cap behaviourally, not just in the file: a local gateway that
+keeps asking for tool calls and never answers can only end at the cap, and the run dies with exit 53,
+`FatalTurnLimitedError`, after exactly 100 turns.
 
 ## Claude is not hardened
 
@@ -320,7 +352,8 @@ untouched (`docker/entrypoint.sh:10-12`), because the clone container needs `GIT
 before any agent exists.
 
 The agent also runs under `timeout --signal=TERM --kill-after=1m`, defaulting to 70 minutes
-(`docker/server-pipeline.sh:43`, `:63`) — nothing inside the pod otherwise bounds a stalled agent.
+(`docker/server-pipeline.sh:43`, `:63`). For Gemini the turn cap bounds the run as well; for Claude
+the timeout is still the only bound.
 
 ## Control summary
 
@@ -344,6 +377,8 @@ The agent also runs under `timeout --signal=TERM --kill-after=1m`, defaulting to
 | Secrecy rules appended to the prompt (advisory) | Agent-agnostic | `docker/agent-lib.sh:19-35` |
 | Root-owned admin policy: deny fetch/search tools, all MCP tools, egress shell prefixes | **Gemini only** | `docker/gemini-policy.toml`, `docker/Dockerfile:69-74` |
 | System settings: `blockGitExtensions`, empty MCP allowlist | **Gemini only** | `docker/gemini-settings.json` |
+| Turn cap of 100, hard exit 53 (bounds loops, not spend) | **Gemini only** | `docker/gemini-settings.json` |
+| CLI telemetry off | **Gemini only** | `docker/gemini-settings.json` |
 | CLI version pin justified by policy-engine semantics | **Gemini only** | `docker/Dockerfile:18-19` |
 | `--setting-sources user`, `--strict-mcp-config` (pre-existing) | **Claude only** | `docker/server-pipeline.sh:67-68` |
 | No tool policy, no managed settings — `Bash(*)`, `WebFetch(*)` | **Claude only, accepted risk** | `docker/claude-settings.json` |
