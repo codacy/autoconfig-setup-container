@@ -79,8 +79,9 @@ gw=$!
 sleep 1
 # The gateway auth type fails the CLI's auth validation, so pin the API-key path; the base URL
 # still redirects every model call to the local gateway.
-mkdir -p /home/node/.gemini /tmp/probe-ws
-printf '%s\n' '{"security":{"auth":{"selectedType":"gemini-api-key"}}}' > /home/node/.gemini/settings.json
+# ${HOME}, not a fixed path: the image now starts as root, so gemini reads /root/.gemini here.
+mkdir -p "${HOME}/.gemini" /tmp/probe-ws
+printf '%s\n' '{"security":{"auth":{"selectedType":"gemini-api-key"}}}' > "${HOME}/.gemini/settings.json"
 cd /tmp/probe-ws || exit 1
 GEMINI_API_KEY=fake-test-key GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:${PORT}" \
   timeout 120 gemini -y --skip-trust -m gemini-2.5-flash -o stream-json -p "go" \
@@ -107,6 +108,97 @@ echo "EGRESS_CANARY=$([[ -f /tmp/egress-canary ]] && echo reached || echo blocke
 # No `case` — host bash 3.2 miscounts parens inside a heredoc in a command substitution.
 cli=$(verdict run_shell_command 'codacy --version')
 echo "ALLOW_CODACY_CLI=$([[ ${cli} == policy_violation || ${cli} == no_* ]] && echo blocked || echo allowed)"
+
+# --- privilege separation -------------------------------------------------------------------
+# The payload runs as root (the image's default user); anything that must see what the agent sees
+# runs through here, with the same HOME the entrypoint hands it.
+as_agent() {
+  runuser -u agent -- env HOME=/home/agent USER=agent PATH="${PATH}" "$@"
+}
+
+echo "UID_RUNNER=$(id -u runner 2>/dev/null || echo missing)"
+echo "UID_AGENT=$(id -u agent 2>/dev/null || echo missing)"
+echo "GID_CODACY=$(getent group codacy | cut -d: -f3)"
+echo "SHIM_HELP=$(as_agent codacy --help >/dev/null 2>&1 && echo ok || echo failed)"
+# The sudo rule permits any argument, so the launcher itself must reject other binaries.
+echo "SHIM_TRAVERSAL=$(as_agent sudo -n -u runner /usr/local/bin/codacy-run ../../bin/sh -c id >/dev/null 2>&1 && echo allowed || echo rejected)"
+
+# Runs the real entrypoint with a sentinel token and reports what the agent inherits.
+SENTINEL=codacy-token-sentinel-9f3a
+DROP=$(CODACY_API_TOKEN="${SENTINEL}" GEMINI_API_KEY=gemini-test-key \
+  CODACY_API_BASE_URL=https://api.test.codacy.com \
+  /usr/local/bin/entrypoint.sh bash -c \
+  'echo "DROP_USER=$(id -un)"; env; cat /proc/*/cmdline 2>/dev/null | tr "\0" "\n"' 2>/dev/null)
+printf '%s\n' "${DROP}" | grep -m1 '^DROP_USER=' || echo "DROP_USER=missing"
+# One grep covers both leak paths: the sentinel appears in neither the environment nor any argv.
+echo "DROP_TOKEN=$(printf '%s' "${DROP}" | grep -q "${SENTINEL}" && echo leaked || echo absent)"
+echo "DROP_TOKEN_VAR=$(printf '%s' "${DROP}" | grep -q '^CODACY_API_TOKEN=' && echo present || echo absent)"
+echo "DROP_GEMINI=$(printf '%s' "${DROP}" | grep -q '^GEMINI_API_KEY=gemini-test-key$' && echo present || echo missing)"
+echo "DROP_BASE_URL=$(printf '%s' "${DROP}" | grep -q '^CODACY_API_BASE_URL=' && echo present || echo absent)"
+
+# The entrypoint run above is what staged this file.
+echo "CREDS_PERMS=$(stat -c '%U %G %a' /run/codacy/codacy.env 2>/dev/null || echo missing)"
+echo "CREDS_DIR_PERMS=$(stat -c '%U %G %a' /run/codacy 2>/dev/null || echo missing)"
+echo "CREDS_BASE_URL=$(grep -q '^export CODACY_API_BASE_URL=https://api.test.codacy.com$' /run/codacy/codacy.env 2>/dev/null && echo staged || echo missing)"
+echo "CREDS_READ=$(as_agent cat /run/codacy/codacy.env >/dev/null 2>&1 && echo readable || echo denied)"
+# The CLI is useless if runner lost its read along the way.
+echo "CREDS_RUNNER_READ=$(runuser -u runner -- cat /run/codacy/codacy.env >/dev/null 2>&1 && echo ok || echo denied)"
+
+# `repo` is an allowed subcommand, so the flag block — not the subcommand block — is what fires.
+# -K/-X are the CLI's short aliases for --unlink-standard/--disable-all, including bundled (-eX).
+blocked=0
+msg=0
+for flag in --force --force=true --unlink-standard --unlink-standard=all --disable-all --disable-all=1 \
+            -K -K12345 -X -eX; do
+  out=$(as_agent codacy repo "${flag}" 2>&1) && rc=0 || rc=$?
+  [[ ${rc} -eq 1 ]] && blocked=$((blocked + 1))
+  printf '%s' "${out}" | grep -q "flag ${flag} is blocked in the autoconfig container" && msg=$((msg + 1))
+done
+echo "BLOCKED_COUNT=${blocked}/10"
+echo "BLOCKED_MSG=${msg}/10"
+
+# The CLI-name allowlist stops arbitrary binaries; this stops arbitrary SUBCOMMANDS of the real
+# CLIs. `codacy-analysis analyze` runs repo tools locally as runner with the token loaded.
+denied() {
+  local out
+  out=$(as_agent "$@" 2>&1) && return 1
+  printf '%s' "${out}" | grep -q 'not permitted\|expected a subcommand as the first argument'
+}
+echo "SUB_ANALYZE=$(denied codacy-analysis analyze --tool ESLint9 /workspace && echo denied || echo allowed)"
+echo "SUB_BOGUS=$(denied codacy delete-everything && echo denied || echo allowed)"
+# An allowed subcommand must pass the shim and reach the CLI, which then fails on no network/token.
+echo "SUB_INFO=$(denied codacy-analysis info && echo blocked || echo reached_cli)"
+echo "SUB_TOOLS=$(denied codacy tools && echo blocked || echo reached_cli)"
+# The subcommand must be $1: a leading flag is never scanned past, so it cannot smuggle one.
+echo "SUB_FLAGFIRST=$(denied codacy-analysis --verbose analyze && echo denied || echo allowed)"
+echo "SUB_SMUGGLE=$(denied codacy-analysis --directory info analyze && echo denied || echo allowed)"
+# `-o <format>` is a real global on the cloud CLI: pre-fix this reached the denied `login`.
+echo "SUB_SMUGGLE_REAL=$(denied codacy -o issues login && echo denied || echo allowed)"
+echo "SUB_VERSION=$(as_agent codacy --version >/dev/null 2>&1 && echo ok || echo failed)"
+
+# The handoff the clone init container performs: the agent owns the tree but cannot touch .git,
+# where git config carries settings the runner-side CLIs would execute. Last — it wipes /workspace.
+WS=/workspace
+rm -rf /tmp/src "${WS:?}"/* "${WS:?}"/.[!.]* 2>/dev/null
+git init -q /tmp/src && git -C /tmp/src config user.email t@codacy.com && git -C /tmp/src config user.name t
+echo fixture > /tmp/src/README.md
+git -C /tmp/src add -A && git -C /tmp/src commit -qm fixture
+git clone -q /tmp/src "${WS}"
+echo "GIT_HANDOFF=$(/usr/local/bin/handoff-workspace.sh "${WS}" >/dev/null 2>&1 && echo ok || echo failed)"
+echo "GIT_WS_OWNER=$(stat -c '%U' "${WS}/README.md" 2>/dev/null || echo missing)"
+echo "GIT_ROOT_PERMS=$(stat -c '%U:%G %a' "${WS}" 2>/dev/null || echo missing)"
+echo "GIT_DIR_OWNER=$(stat -c '%U:%G' "${WS}/.git" 2>/dev/null || echo missing)"
+echo "GIT_CONFIG_WRITE=$(as_agent bash -c "echo '  fsmonitor = /bin/sh' >> ${WS}/.git/config" 2>/dev/null && echo allowed || echo denied)"
+# Sticky bit: writing .git is not the only way in — swapping it aside for a replacement is.
+echo "GIT_DIR_RENAME=$(as_agent mv "${WS}/.git" "${WS}/.git.x" 2>/dev/null && echo allowed || echo denied)"
+echo "GIT_DIR_DELETE=$(as_agent rm -rf "${WS}/.git" 2>/dev/null && [[ ! -e "${WS}/.git" ]] && echo allowed || echo denied)"
+# The agent still has to be able to work in the checkout.
+echo "GIT_READ=$(as_agent git -C "${WS}" log -1 --format=%s >/dev/null 2>&1 && echo ok || echo denied)"
+echo "GIT_WS_WRITE=$(as_agent touch "${WS}/agent-file" 2>/dev/null && echo ok || echo denied)"
+# A dirty tree is the real test: git wants to refresh .git/index, which the agent cannot write.
+as_agent bash -c "echo dirty >> ${WS}/README.md"
+echo "GIT_STATUS_DIRTY=$(as_agent git -C "${WS}" status --porcelain >/dev/null 2>&1 && echo ok || echo denied)"
+echo "GIT_DIFF_DIRTY=$(as_agent git -C "${WS}" diff --stat >/dev/null 2>&1 && echo ok || echo denied)"
 INNER
 )
 
@@ -120,7 +212,43 @@ YOLO_CANARY=present
 DENY_SHELL_CURL=policy_violation
 DENY_WEB_FETCH=tool_not_registered
 EGRESS_CANARY=blocked
-ALLOW_CODACY_CLI=allowed'
+ALLOW_CODACY_CLI=allowed
+UID_RUNNER=1001
+UID_AGENT=1002
+GID_CODACY=1003
+SHIM_HELP=ok
+SHIM_TRAVERSAL=rejected
+DROP_USER=agent
+DROP_TOKEN=absent
+DROP_TOKEN_VAR=absent
+DROP_GEMINI=present
+DROP_BASE_URL=absent
+CREDS_PERMS=root runner 640
+CREDS_DIR_PERMS=root runner 750
+CREDS_BASE_URL=staged
+CREDS_READ=denied
+CREDS_RUNNER_READ=ok
+BLOCKED_COUNT=10/10
+BLOCKED_MSG=10/10
+SUB_ANALYZE=denied
+SUB_BOGUS=denied
+SUB_INFO=reached_cli
+SUB_TOOLS=reached_cli
+SUB_FLAGFIRST=denied
+SUB_SMUGGLE=denied
+SUB_SMUGGLE_REAL=denied
+SUB_VERSION=ok
+GIT_HANDOFF=ok
+GIT_WS_OWNER=agent
+GIT_ROOT_PERMS=root:codacy 3775
+GIT_DIR_OWNER=root:codacy
+GIT_CONFIG_WRITE=denied
+GIT_DIR_RENAME=denied
+GIT_DIR_DELETE=denied
+GIT_READ=ok
+GIT_WS_WRITE=ok
+GIT_STATUS_DIRTY=ok
+GIT_DIFF_DIRTY=ok'
 
 # Left column is expected, right is what the image did.
 diff -u <(printf '%s\n' "${EXPECTED}") <(printf '%s\n' "${ACTUAL}") || fail=1
