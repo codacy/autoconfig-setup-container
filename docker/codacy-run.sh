@@ -19,28 +19,30 @@ esac
 # the agent run `codacy-analysis analyze`, which executes repo tools (e.g. an agent-written
 # eslint.config.js) LOCALLY as `runner` with the token loaded — token theft. Permit only the
 # subcommands the configure-codacy-cloud skill actually calls.
-sub=""
-for arg in "$@"; do
-  case "${arg}" in
-    -*) ;;            # skip flags that precede the subcommand
-    *) sub="${arg}"; break;;
-  esac
-done
 case "$name" in
   codacy-analysis) allowed="info init config";;
   codacy)          allowed="repo issues tools tool pattern patterns";;
 esac
-# Empty means flags only (--help/--version): no subcommand runs, nothing executes, so allow it.
-if [ -n "${sub}" ]; then
-  case " ${allowed} " in
-    *" ${sub} "*) ;;
-    *) echo "ERROR: subcommand ${sub} not permitted" >&2; exit 1;;
-  esac
-fi
+# Both CLIs are commander-based and subcommand-first (`codacy <sub> …`), so the subcommand must be
+# $1. Scanning past leading flags instead let a value-taking global flag occupy that position and
+# smuggle a denied subcommand through: `codacy-analysis --directory info analyze` reads as `info`.
+sub="${1:-}"
+case "${sub}" in
+  # These print and exit without running any subcommand.
+  --help|-h|--version|-V) ;;
+  ""|-*) echo "ERROR: expected a subcommand as the first argument, got '${sub}'" >&2; exit 1;;
+  *)
+    case " ${allowed} " in
+      *" ${sub} "*) ;;
+      *) echo "ERROR: subcommand ${sub} not permitted" >&2; exit 1;;
+    esac;;
+esac
 # Destructive configuration flags: autoconfig tunes a repository, it never resets one.
+# -K (--unlink-standard) and -X (--disable-all) are real short aliases, and commander bundles short
+# flags, so any single-dash cluster containing K or X is rejected too. --force has no short alias.
 for arg in "$@"; do
   case "${arg}" in
-    --force|--force=*|--unlink-standard|--unlink-standard=*|--disable-all|--disable-all=*)
+    --force|--force=*|--unlink-standard|--unlink-standard=*|--disable-all|--disable-all=*|-[KX]*|-[!-]*[KX]*)
       echo "ERROR: flag ${arg} is blocked in the autoconfig container" >&2; exit 1;;
   esac
 done
