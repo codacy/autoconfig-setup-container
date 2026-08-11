@@ -105,8 +105,11 @@ probe_policy_enforcement() {
 
 probe_summary_sanitize() {
   local f=/tmp/probe-summary.json
+  # GEMINI_API_KEY is really in the agent's environment, so both Google key shapes are staged here.
   jq -n '{
     notes: "used sk-ant-api03-AAAABBBBCCCCDDDDEEEE1234 and ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 while configuring",
+    geminiClassic: "AIzaSyD3ADb33FfAKEk3yN0tR3alXXXXXXXXXXX",
+    geminiNew: "AQ.Ab8RN6JfAKEt0k3nV4lu3D3ADb33F",
     commit: "e83c5163316f89bfbde7d9ab23ca2e25604af290",
     tool: "eslint",
     enabled: true
@@ -115,6 +118,8 @@ probe_summary_sanitize() {
   /usr/local/bin/summary-sanitize.sh "${f}"
 
   grep -qE 'sk-ant-|ghp_' "${f}" && echo "SANITIZE_SECRETS=present" || echo "SANITIZE_SECRETS=gone"
+  grep -q 'AIza' "${f}" && echo "SANITIZE_GEMINI_AIZA=present" || echo "SANITIZE_GEMINI_AIZA=gone"
+  grep -q 'AQ\.' "${f}" && echo "SANITIZE_GEMINI_AQ=present" || echo "SANITIZE_GEMINI_AQ=gone"
   jq -e . "${f}" >/dev/null 2>&1 && echo "SANITIZE_JSON=valid" || echo "SANITIZE_JSON=invalid"
   echo "SANITIZE_INTACT=$(jq -r 'if .tool == "eslint" and .enabled == true then "ok" else "changed" end' \
     "${f}" 2>/dev/null || echo unreadable)"
@@ -184,6 +189,8 @@ check "policy still allows the Codacy CLI"            ALLOW_CODACY_CLI allowed
 
 echo "[3/3] behavioral — summary sanitizer run on a crafted summary"
 check "secret-shaped strings redacted"              SANITIZE_SECRETS gone
+check "gemini classic AIza key redacted"            SANITIZE_GEMINI_AIZA gone
+check "gemini AQ. key redacted"                     SANITIZE_GEMINI_AQ   gone
 check "summary still valid JSON"                    SANITIZE_JSON    valid
 check "unrelated summary values intact"             SANITIZE_INTACT  ok
 check "git commit SHA survives sanitization"        SANITIZE_SHA     kept
