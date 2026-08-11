@@ -116,6 +116,13 @@ if [[ -f "${SUMMARY_PATH}" && -n "${RUN_META}" ]]; then
     "${SUMMARY_PATH}" > "${SUMMARY_PATH}.tmp" && mv "${SUMMARY_PATH}.tmp" "${SUMMARY_PATH}"
 fi
 
+# Must stay after every write to the summary — in local mode the file is left on the developer's
+# mounted volume, so it is redacted here rather than at upload time.
+if ! /usr/local/bin/summary-sanitize.sh "${SUMMARY_PATH}"; then
+  echo "ERROR: summary sanitization failed; the summary may still contain secrets" >&2
+  exit ${EXIT_BAD_INPUT}
+fi
+
 if [[ ${OUTCOME_EXIT} -ne ${EXIT_OK} ]]; then
   echo "ERROR: autoconfig did not complete (exit ${OUTCOME_EXIT}): ${OUTCOME_REASON}" >&2
   exit ${OUTCOME_EXIT}

@@ -123,7 +123,20 @@ probe_summary_sanitize() {
     "${f}" 2>/dev/null || echo unreadable)"
 }
 
+# Both pipelines leave the summary somewhere durable (S3, or a mounted volume), so both must sanitize.
+probe_pipelines_sanitize() {
+  local p
+  for p in local server; do
+    if grep -q 'summary-sanitize.sh "${SUMMARY_PATH}"' "/usr/local/bin/${p}-pipeline.sh" 2>/dev/null; then
+      echo "SANITIZE_CALL_${p}=present"
+    else
+      echo "SANITIZE_CALL_${p}=absent"
+    fi
+  done
+}
+
 probe_policy_config
+probe_pipelines_sanitize
 probe_policy_enforcement
 probe_summary_sanitize
 INNER
@@ -158,6 +171,8 @@ check "policy dir root-owned (gemini skips it if not)" POLICY_DIR_OWNER_MODE 0:7
 check "admin policy ships all three rules"            POLICY_RULES          3
 check "system settings ship the expected keys"        SYSTEM_SETTINGS       ok
 check "system settings root-owned"                    SETTINGS_OWNER_MODE   0:644
+check "local pipeline sanitizes the summary"          SANITIZE_CALL_local   present
+check "server pipeline sanitizes the summary"         SANITIZE_CALL_server  present
 
 echo "[2/3] behavioral — what gemini does with that policy under -y"
 check "yolo auto-approves an unlisted shell command"  YOLO_RUNS_SHELL  success
