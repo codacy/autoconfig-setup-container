@@ -103,8 +103,47 @@ probe_policy_enforcement() {
     && echo "ALLOW_CODACY_CLI=${cli}" || echo "ALLOW_CODACY_CLI=allowed"
 }
 
+probe_summary_sanitize() {
+  local f=/tmp/probe-summary.json
+  # GEMINI_API_KEY is really in the agent's environment, so both Google key shapes are staged here.
+  jq -n '{
+    notes: "used sk-ant-api03-AAAABBBBCCCCDDDDEEEE1234 and ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 while configuring",
+    geminiClassic: "AIzaSyD3ADb33FfAKEk3yN0tR3alXXXXXXXXXXX",
+    geminiNew: "AQ.Ab8RN6JfAKEt0k3nV4lu3D3ADb33F",
+    commit: "e83c5163316f89bfbde7d9ab23ca2e25604af290",
+    tool: "eslint",
+    enabled: true
+  }' > "${f}"
+
+  /usr/local/bin/summary-sanitize.sh "${f}"
+
+  grep -qE 'sk-ant-|ghp_' "${f}" && echo "SANITIZE_SECRETS=present" || echo "SANITIZE_SECRETS=gone"
+  grep -q 'AIza' "${f}" && echo "SANITIZE_GEMINI_AIZA=present" || echo "SANITIZE_GEMINI_AIZA=gone"
+  grep -q 'AQ\.' "${f}" && echo "SANITIZE_GEMINI_AQ=present" || echo "SANITIZE_GEMINI_AQ=gone"
+  jq -e . "${f}" >/dev/null 2>&1 && echo "SANITIZE_JSON=valid" || echo "SANITIZE_JSON=invalid"
+  echo "SANITIZE_INTACT=$(jq -r 'if .tool == "eslint" and .enabled == true then "ok" else "changed" end' \
+    "${f}" 2>/dev/null || echo unreadable)"
+  # A 40-char hex commit SHA is legitimate summary content, not a secret shape.
+  echo "SANITIZE_SHA=$(jq -r 'if .commit == "e83c5163316f89bfbde7d9ab23ca2e25604af290" then "kept" else "mangled" end' \
+    "${f}" 2>/dev/null || echo unreadable)"
+}
+
+# Both pipelines leave the summary somewhere durable (S3, or a mounted volume), so both must sanitize.
+probe_pipelines_sanitize() {
+  local p
+  for p in local server; do
+    if grep -q 'summary-sanitize.sh "${SUMMARY_PATH}"' "/usr/local/bin/${p}-pipeline.sh" 2>/dev/null; then
+      echo "SANITIZE_CALL_${p}=present"
+    else
+      echo "SANITIZE_CALL_${p}=absent"
+    fi
+  done
+}
+
 probe_policy_config
+probe_pipelines_sanitize
 probe_policy_enforcement
+probe_summary_sanitize
 INNER
 )
 
@@ -131,20 +170,30 @@ check() {
   fi
 }
 
-echo "[1/2] config assertions — what the image ships, not enforcement"
+echo "[1/3] config assertions — what the image ships, not enforcement"
 check "admin policy root-owned, not agent-writable"   POLICY_OWNER_MODE     0:644
 check "policy dir root-owned (gemini skips it if not)" POLICY_DIR_OWNER_MODE 0:755
 check "admin policy ships all three rules"            POLICY_RULES          3
 check "system settings ship the expected keys"        SYSTEM_SETTINGS       ok
 check "system settings root-owned"                    SETTINGS_OWNER_MODE   0:644
+check "local pipeline sanitizes the summary"          SANITIZE_CALL_local   present
+check "server pipeline sanitizes the summary"         SANITIZE_CALL_server  present
 
-echo "[2/2] behavioral — what gemini does with that policy under -y"
+echo "[2/3] behavioral — what gemini does with that policy under -y"
 check "yolo auto-approves an unlisted shell command"  YOLO_RUNS_SHELL  success
 check "that control command actually ran"             YOLO_CANARY      present
 check "admin deny beats -y for curl"                  DENY_SHELL_CURL  policy_violation
 check "admin deny drops web_fetch from the registry"  DENY_WEB_FETCH   tool_not_registered
 check "no egress attempt got through"                 EGRESS_ATTEMPT   blocked
 check "policy still allows the Codacy CLI"            ALLOW_CODACY_CLI allowed
+
+echo "[3/3] behavioral — summary sanitizer run on a crafted summary"
+check "secret-shaped strings redacted"              SANITIZE_SECRETS gone
+check "gemini classic AIza key redacted"            SANITIZE_GEMINI_AIZA gone
+check "gemini AQ. key redacted"                     SANITIZE_GEMINI_AQ   gone
+check "summary still valid JSON"                    SANITIZE_JSON    valid
+check "unrelated summary values intact"             SANITIZE_INTACT  ok
+check "git commit SHA survives sanitization"        SANITIZE_SHA     kept
 
 echo
 echo "==> ${pass} passed, ${fail} failed"
