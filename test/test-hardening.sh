@@ -107,6 +107,7 @@ probe_summary_sanitize() {
   local f=/tmp/probe-summary.json
   jq -n '{
     notes: "used sk-ant-api03-AAAABBBBCCCCDDDDEEEE1234 and ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 while configuring",
+    commit: "e83c5163316f89bfbde7d9ab23ca2e25604af290",
     tool: "eslint",
     enabled: true
   }' > "${f}"
@@ -116,6 +117,9 @@ probe_summary_sanitize() {
   grep -qE 'sk-ant-|ghp_' "${f}" && echo "SANITIZE_SECRETS=present" || echo "SANITIZE_SECRETS=gone"
   jq -e . "${f}" >/dev/null 2>&1 && echo "SANITIZE_JSON=valid" || echo "SANITIZE_JSON=invalid"
   echo "SANITIZE_INTACT=$(jq -r 'if .tool == "eslint" and .enabled == true then "ok" else "changed" end' \
+    "${f}" 2>/dev/null || echo unreadable)"
+  # A 40-char hex commit SHA is legitimate summary content, not a secret shape.
+  echo "SANITIZE_SHA=$(jq -r 'if .commit == "e83c5163316f89bfbde7d9ab23ca2e25604af290" then "kept" else "mangled" end' \
     "${f}" 2>/dev/null || echo unreadable)"
 }
 
@@ -167,6 +171,7 @@ echo "[3/3] behavioral — summary sanitizer run on a crafted summary"
 check "secret-shaped strings redacted"              SANITIZE_SECRETS gone
 check "summary still valid JSON"                    SANITIZE_JSON    valid
 check "unrelated summary values intact"             SANITIZE_INTACT  ok
+check "git commit SHA survives sanitization"        SANITIZE_SHA     kept
 
 echo
 echo "==> ${pass} passed, ${fail} failed"
