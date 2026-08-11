@@ -14,7 +14,8 @@ if [[ ! -d "${WORKSPACE}" ]]; then
   exit 1
 fi
 
-chown -R agent:codacy "${WORKSPACE}" || exit 1
+# Skips .git so the object store is walked once, by the root:codacy pass below, not twice.
+find "${WORKSPACE}" -mindepth 1 -maxdepth 1 ! -name .git -exec chown -R agent:codacy {} + || exit 1
 
 if [[ -e "${WORKSPACE}/.git" ]]; then
   chown -R root:codacy "${WORKSPACE}/.git" || exit 1
