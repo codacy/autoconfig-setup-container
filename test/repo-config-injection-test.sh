@@ -108,14 +108,16 @@ CMD=$(grep -m1 '"subtype":"init"' /tmp/hard.json 2>/dev/null \
   | jq -r '(.slash_commands // []) | index("configure-codacy-cloud") | if . then "ok" else "missing" end' 2>/dev/null)
 echo "HARD_SKILL_CMD=${CMD:-missing}"
 
-# 5. Gemini path. Production passes --skip-trust, which marks the workspace trusted and
-# so enables repo-declared MCP servers; trustedFolders.json reproduces that state here
+# 5. Gemini path. Production passes --skip-trust, which marks the workspace trusted and would
+# otherwise enable repo-declared MCP servers; trustedFolders.json reproduces that state here
 # because --skip-trust is not accepted by `mcp list`.
 gem_state() {
   local out
   out=$(timeout 40 gemini mcp list 2>&1)
   if ! printf '%s' "${out}" | grep -q 'repo-evil'; then
     echo absent
+  elif printf '%s' "${out}" | grep -qE 'repo-evil.*Blocked'; then
+    echo blocked
   elif printf '%s' "${out}" | grep -qE 'repo-evil.*Disabled'; then
     echo disabled
   else
@@ -184,8 +186,10 @@ echo "[4/5] hardening does not break the pipeline"
 check "user-scope skill command available" HARD_SKILL_CMD ok
 
 echo "[5/5] gemini path (the one production actually runs)"
-check "positive control: trusted workspace enables repo MCP" GEM_TRUSTED   enabled
-check "untrusted workspace disables repo MCP"                GEM_UNTRUSTED disabled
+# blocked, not absent: gemini does read the repo's .gemini/settings.json — the positive control
+# that this test can see repo config at all — and the system MCP allowlist is what stops it.
+check "trusted workspace: repo MCP read but blocked"         GEM_TRUSTED   blocked
+check "untrusted workspace: repo MCP blocked too"            GEM_UNTRUSTED blocked
 check "sanitizer removes repo MCP entirely"                  GEM_SANITIZED absent
 
 echo

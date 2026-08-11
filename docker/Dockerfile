@@ -15,9 +15,11 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 
 # Install CLIs globally as published packages
 ARG CLAUDE_CODE_VERSION=2.1.226
+# Pinned: policy-engine semantics change between minors, so a bump must be tested, never picked up silently
+ARG GEMINI_CLI_VERSION=0.54.4
 RUN npm install -g \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
-    @google/gemini-cli \
+    @google/gemini-cli@${GEMINI_CLI_VERSION} \
     @codacy/codacy-cloud-cli \
     @codacy/analysis-cli
 
@@ -33,7 +35,14 @@ COPY docker/local-pipeline.sh /usr/local/bin/local-pipeline.sh
 COPY docker/server-pipeline.sh /usr/local/bin/server-pipeline.sh
 COPY docker/clone-workspace.sh /usr/local/bin/clone-workspace.sh
 COPY docker/sanitize-workspace.sh /usr/local/bin/sanitize-workspace.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh \
+COPY docker/summary-sanitize.sh /usr/local/bin/summary-sanitize.sh
+COPY docker/gemini-policy.toml /etc/gemini-cli/policies/10-codacy-lockdown.toml
+COPY docker/gemini-settings.json /etc/gemini-cli/settings.json
+# gemini skips a policy directory that is not root-owned, and the agent user must not be able to relax either file
+RUN chown -R root:root /etc/gemini-cli \
+  && chmod 0755 /etc/gemini-cli /etc/gemini-cli/policies \
+  && chmod 0644 /etc/gemini-cli/settings.json /etc/gemini-cli/policies/10-codacy-lockdown.toml \
+  && chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/local-pipeline.sh /usr/local/bin/server-pipeline.sh /usr/local/bin/clone-workspace.sh /usr/local/bin/sanitize-workspace.sh /usr/local/bin/summary-sanitize.sh \
   && printf 'node ALL=(root) NOPASSWD: /bin/chown -R node\\:node /home/node/.codacy\n' \
      > /etc/sudoers.d/node-toolcache \
   && chmod 0440 /etc/sudoers.d/node-toolcache
