@@ -1,0 +1,19 @@
+# Admin-tier policy (tier 5): outranks the shipped yolo allow-all rule, so `-y` cannot lift these denials.
+[[rule]]
+toolName = ["web_fetch", "google_web_search"]
+decision = "deny"
+priority = 900
+denyMessage = "Network egress tools are disabled by Codacy policy."
+
+[[rule]]
+toolName = "*"
+mcpName = "*"
+decision = "deny"
+priority = 900
+
+# Matched against the command the model asks to run, not what that command execs internally, so the Codacy CLI shims stay usable.
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["curl", "wget", "nc", "ssh", "git push", "sudo", "docker"]
+decision = "deny"
+priority = 950
