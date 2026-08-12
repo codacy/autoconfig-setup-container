@@ -118,7 +118,8 @@ docker run --rm -it \
 Pass the script as the command, not as `--entrypoint`: the image entrypoint is what stages the
 Codacy token and drops privilege to the `agent` user, and skipping it skips both. `clone-workspace.sh`
 is the single exception: the entrypoint execs it as root and untouched, because the clone needs
-`GIT_TOKEN`. `server-pipeline.sh` exits 1 if `/workspace` is empty.
+`GIT_TOKEN` — that script then drops to `agent` itself for the clone and the sanitizer.
+`server-pipeline.sh` exits 1 if `/workspace` is empty.
 
 `httpbin.org/put` accepts any PUT and is useful for smoke-testing the upload step.
 

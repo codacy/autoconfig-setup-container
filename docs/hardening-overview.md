@@ -56,16 +56,16 @@ Out of scope, deliberately: the LLM provider itself, and network egress from ins
 
 | Secret               | Reaches                                     | Where it lives                                                      | Evidence |
 |----------------------|---------------------------------------------|---------------------------------------------------------------------|----------|
-| `GIT_TOKEN`          | clone init container only                   | Env of a container that exits before the agent container starts     | `docker/clone-workspace.sh:15-20`, `docker/entrypoint.sh:6-12` |
+| `GIT_TOKEN`          | clone init container only                   | Env of a container that exits before the agent container starts     | `docker/clone-workspace.sh:35-40`, `docker/entrypoint.sh:6-12` |
 | `CODACY_API_TOKEN`   | `runner` only, never the agent              | `/run/codacy/codacy.env`, `root:runner` `0640`, in a `0750` dir     | `docker/entrypoint.sh:19-38`, `docker/codacy-run.sh:49-51` |
 | `CODACY_API_BASE_URL`| `runner` only                               | Same staged file — only the Codacy CLI reads it                     | `docker/entrypoint.sh:33-35` |
 | `RESULT_UPLOAD_URL`  | pipeline process, **not** the agent process | Unset for the agent via `env -u`                                    | `docker/server-pipeline.sh:54`, `:62`, `:112` |
-| `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | the agent process        | Plain environment variable — see below                              | `docker/entrypoint.sh:51` |
+| `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | the agent process        | Plain environment variable — see below                              | `docker/entrypoint.sh:65` |
 
 ### The LLM key is really in the agent's environment
 
 There is no auth proxy. `env -i` re-adds `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` verbatim
-(`docker/entrypoint.sh:51`), because the CLI reads the key from its own environment. A hijacked agent
+(`docker/entrypoint.sh:65`), because the CLI reads the key from its own environment. A hijacked agent
 can read its own key. The hardening test asserts exactly this and calls it correct behaviour
 (`test/test-hardening.sh`, `DROP_GEMINI=present`).
 
@@ -80,7 +80,7 @@ reach, and that is the boundary this repository actually enforces.
 
 ## Two-user model
 
-The image builds two unprivileged users (`docker/Dockerfile:32-35`):
+The image builds two unprivileged users (`docker/Dockerfile:35-38`):
 
 - **`runner` (uid 1001)** — holds the Codacy token and runs the real Codacy CLIs.
 - **`agent` (uid 1002)** — runs `claude`/`gemini` and the pipeline script. Holds no Codacy credential.
@@ -89,9 +89,13 @@ The image builds two unprivileged users (`docker/Dockerfile:32-35`):
   `runner` alone. The shared `codacy` group would have handed it to the agent too.
 
 The Codacy tool cache lives in `runner`'s home at `/home/runner/.codacy`, mode `0700`
-(`docker/Dockerfile:45-47`) — the agent cannot read or plant anything in it. The container starts as
-root (`docker/Dockerfile:79`) only so the entrypoint can do the privileged staging; it never runs the
+(`docker/Dockerfile:48-50`) — the agent cannot read or plant anything in it. The container starts as
+root (`docker/Dockerfile:82`) only so the entrypoint can do the privileged staging; it never runs the
 agent as root.
+
+In the local flow `/workspace` is a host bind mount holding the developer's own files, so the
+entrypoint remaps `agent` onto the mount's uid rather than chowning them; it refuses to adopt
+`runner`'s uid, which would hand the agent the Codacy token (`docker/entrypoint.sh:40-52`).
 
 ```mermaid
 flowchart LR
@@ -115,11 +119,15 @@ flowchart LR
 ## Clone, sanitize, handoff
 
 `clone-workspace.sh` runs as the init container and must finish successfully before the agent
-container starts — a non-zero exit keeps the agent from running at all.
+container starts — a non-zero exit keeps the agent from running at all. The AAM pod spec overrides
+the image `ENTRYPOINT` for this container, so the script performs its own privilege drop
+(`docker/clone-workspace.sh:20-33`): it prepares the workspace as root, re-execs itself as `agent`
+for the clone and the sanitizer — which is where a hostile repository is first touched — and keeps
+only the handoff, which must `chown`, as root.
 
 1. **Clone.** An HTTPS URL is built per provider (`gh`/`ghe`, `gl`/`gle`, `bb`) with `GIT_TOKEN`
    embedded, and clone output is passed through `sed` so the token cannot appear in the log
-   (`docker/clone-workspace.sh:36-63`).
+   (`docker/clone-workspace.sh:54-82`).
 2. **Sanitize** (`docker/sanitize-workspace.sh`):
    - Removes every repository-supplied agent-config path: directories `.claude` and `.gemini`,
      files `.mcp.json`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`, `AGENTS.md`, at any depth,
@@ -136,7 +144,7 @@ container starts — a non-zero exit keeps the agent from running at all.
    - The workspace root itself stays `root:codacy` mode `3775` — sticky + setgid (`:29-30`). Without
      the sticky bit the agent could not write `.git`, but could rename it aside and drop in a `.git`
      of its own, which the image's `safe.directory /workspace`
-     (`docker/Dockerfile:50`) would then accept. Sticky lets the agent create and remove only its own
+     (`docker/Dockerfile:53`) would then accept. Sticky lets the agent create and remove only its own
      entries; setgid keeps new files in the shared group.
 
 `test/test-hardening.sh` asserts the resulting shape: agent owns the checkout, root owns
@@ -150,8 +158,8 @@ the developer mounted and does not call them — local runs are trusted by desig
 
 The agent never executes the real Codacy CLIs. In the image, `codacy` and `codacy-analysis` are
 moved to `codacy-real` / `codacy-analysis-real` in the same directory, so their relative npm
-symlinks stay valid, and the shim takes over the original names (`docker/Dockerfile:38-43`). The
-only sudo grant in the image is one line (`docker/Dockerfile:74-76`):
+symlinks stay valid, and the shim takes over the original names (`docker/Dockerfile:41-46`). The
+only sudo grant in the image is one line (`docker/Dockerfile:77-79`):
 
 ```
 agent ALL=(runner) NOPASSWD: /usr/local/bin/codacy-run
@@ -184,7 +192,7 @@ counterweight is a root-owned admin-tier policy baked into the image:
 | `docker/gemini-policy.toml` | `/etc/gemini-cli/policies/10-codacy-lockdown.toml` |
 | `docker/gemini-settings.json` | `/etc/gemini-cli/settings.json` |
 
-Both are `root:root` `0644` inside `0755` directories (`docker/Dockerfile:66-71`). The ownership is
+Both are `root:root` `0644` inside `0755` directories (`docker/Dockerfile:69-74`). The ownership is
 load-bearing, not hygiene: the CLI skips a policy directory that is not root-owned, so a writable
 directory means no policy at all. The policy engine is tiered — an admin-tier `deny` outranks the
 allow-all rule that `-y` installs, and any settings or policy found inside the analysed repository sit
@@ -241,7 +249,7 @@ shim allowlists, the summary sanitizer — applies to Claude exactly as it does 
 not tool-level denials, is what contains a Claude run.
 
 The one Claude change in this work is a path: its skills and user-scope settings install under
-`/home/agent/.claude` instead of `/home/node/.claude` (`docker/Dockerfile:84-91`), because the agent
+`/home/agent/.claude` instead of `/home/node/.claude` (`docker/Dockerfile:87-94`), because the agent
 process runs as the `agent` user. Leaving them at the old path would break Claude entirely.
 `test/repo-config-injection-test.sh` drives the real `claude` binary as its positive control, so it
 fails if that move is wrong.
@@ -283,12 +291,14 @@ Local runs are trusted and unrestricted.
 sequenceDiagram
   participant AAM
   participant Init as init container, root
+  participant InitA as init container, agent 1002
   participant Entry as entrypoint.sh, root
   participant Agent as pipeline, agent 1002
   participant Runner as codacy-run, runner 1001
   AAM->>Init: clone-workspace.sh, GIT_TOKEN in env
-  Init->>Init: git clone --depth 1, token masked in output
-  Init->>Init: sanitize-workspace.sh drops repo agent config, scrubs remotes
+  Init->>InitA: runuser -u agent, workspace prepared
+  InitA->>InitA: git clone --depth 1, token masked in output
+  InitA->>InitA: sanitize-workspace.sh drops repo agent config, scrubs remotes
   Init->>Init: handoff-workspace.sh gives .git to root, workspace 3775
   Init-->>AAM: non-zero exit stops the agent container
   AAM->>Entry: server-pipeline.sh
@@ -304,7 +314,7 @@ sequenceDiagram
 
 The privilege drop is an `env -i` allowlist, not a filter: everything is cleared and only the
 non-secret variables the pipelines read are re-added, plus the LLM keys
-(`docker/entrypoint.sh:44-55`). `CODACY_API_TOKEN` and `CODACY_API_BASE_URL` are absent by
+(`docker/entrypoint.sh:57-68`). `CODACY_API_TOKEN` and `CODACY_API_BASE_URL` are absent by
 construction. One exception exists by design: an argument of `clone-workspace.sh` is `exec`'d
 untouched (`docker/entrypoint.sh:10-12`), because the clone container needs `GIT_TOKEN` and exits
 before any agent exists.
@@ -321,18 +331,18 @@ The agent also runs under `timeout --signal=TERM --kill-after=1m`, defaulting to
 | `GIT_TOKEN` confined to an init container that exits first | Agent-agnostic | `docker/clone-workspace.sh`, `docker/entrypoint.sh:6-12` |
 | `.git` root-owned, group-write stripped | Agent-agnostic | `docker/handoff-workspace.sh:20-23` |
 | Workspace root root-owned, sticky + setgid | Agent-agnostic | `docker/handoff-workspace.sh:29-30` |
-| Two users, shared group, single-member `runner` group | Agent-agnostic | `docker/Dockerfile:32-35` |
+| Two users, shared group, single-member `runner` group | Agent-agnostic | `docker/Dockerfile:35-38` |
 | Codacy token staged in a runner-only file, never in argv or the agent env | Agent-agnostic | `docker/entrypoint.sh:19-38` |
-| `env -i` allowlist on privilege drop | Agent-agnostic | `docker/entrypoint.sh:47-55` |
+| `env -i` allowlist on privilege drop | Agent-agnostic | `docker/entrypoint.sh:61-68` |
 | `RESULT_UPLOAD_URL` removed from the agent's environment | Agent-agnostic | `docker/server-pipeline.sh:54` |
-| Tool cache `0700` in `runner`'s home | Agent-agnostic | `docker/Dockerfile:45-47` |
-| Sudo grant limited to one launcher, one target user | Agent-agnostic | `docker/Dockerfile:74-76` |
+| Tool cache `0700` in `runner`'s home | Agent-agnostic | `docker/Dockerfile:48-50` |
+| Sudo grant limited to one launcher, one target user | Agent-agnostic | `docker/Dockerfile:77-79` |
 | CLI-name + subcommand allowlists, subcommand-first rule | Agent-agnostic | `docker/codacy-run.sh:14-39` |
 | Destructive-flag block | Agent-agnostic | `docker/codacy-run.sh:40-48` |
 | Summary secret redaction, incl. Google/Gemini key shapes | Agent-agnostic | `docker/summary-sanitize.sh` |
 | Agent wall-clock timeout | Agent-agnostic | `docker/server-pipeline.sh:43`, `docker/local-pipeline.sh:12` |
 | Secrecy rules appended to the prompt (advisory) | Agent-agnostic | `docker/agent-lib.sh:19-35` |
-| Root-owned admin policy: deny fetch/search tools, all MCP tools, egress shell prefixes | **Gemini only** | `docker/gemini-policy.toml`, `docker/Dockerfile:66-71` |
+| Root-owned admin policy: deny fetch/search tools, all MCP tools, egress shell prefixes | **Gemini only** | `docker/gemini-policy.toml`, `docker/Dockerfile:69-74` |
 | System settings: `blockGitExtensions`, empty MCP allowlist | **Gemini only** | `docker/gemini-settings.json` |
 | CLI version pin justified by policy-engine semantics | **Gemini only** | `docker/Dockerfile:18-19` |
 | `--setting-sources user`, `--strict-mcp-config` (pre-existing) | **Claude only** | `docker/server-pipeline.sh:67-68` |
