@@ -12,6 +12,26 @@ umask 002
 # shellcheck source=docker/agent-lib.sh
 source /usr/local/bin/agent-lib.sh
 
+WORKSPACE="${WORKSPACE_DIR:-/workspace}"
+
+# The k8s init container overrides the image ENTRYPOINT, so entrypoint.sh never runs and this script
+# would clone and sanitize an attacker-controlled repository as uid 0. Do the privileged part here
+# and re-exec the rest as the agent; only the handoff, which must chown, stays root.
+if [[ $(id -u) -eq 0 ]]; then
+  mkdir -p "${WORKSPACE}" || exit ${EXIT_BAD_INPUT}
+  chown agent:codacy "${WORKSPACE}" || exit ${EXIT_BAD_INPUT}
+  chmod 2775 "${WORKSPACE}" || exit ${EXIT_BAD_INPUT}
+  runuser -u agent -- /usr/local/bin/clone-workspace.sh "$@" || exit $?
+
+  if ! /usr/local/bin/handoff-workspace.sh "${WORKSPACE}"; then
+    echo "ERROR: failed to hand the workspace over to the agent user; refusing to launch the agent" >&2
+    exit ${EXIT_BAD_INPUT}
+  fi
+
+  echo "==> Workspace ready at ${WORKSPACE}"
+  exit ${EXIT_OK}
+fi
+
 REQUIRED_VARS=(
   GIT_TOKEN
   CODACY_PROVIDER
@@ -52,7 +72,6 @@ case "${CODACY_PROVIDER}" in
     ;;
 esac
 
-WORKSPACE="${WORKSPACE_DIR:-/workspace}"
 CLONE_HOST="${CODACY_REPO_CLONE_HOST:-${GIT_HOST_DEFAULT}}"
 CLONE_URL="https://${GIT_USERNAME}:${GIT_TOKEN}@${CLONE_HOST}/${CODACY_ORG_NAME}/${CODACY_REPO_NAME}.git"
 
@@ -67,10 +86,4 @@ if ! /usr/local/bin/sanitize-workspace.sh "${WORKSPACE}"; then
   exit ${EXIT_BAD_INPUT}
 fi
 
-if ! /usr/local/bin/handoff-workspace.sh "${WORKSPACE}"; then
-  echo "ERROR: failed to hand the workspace over to the agent user; refusing to launch the agent" >&2
-  exit ${EXIT_BAD_INPUT}
-fi
-
-echo "==> Workspace ready at ${WORKSPACE}"
 exit ${EXIT_OK}

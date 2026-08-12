@@ -50,6 +50,12 @@ echo "SANITIZE=$(jq -r 'if (tostring | test("sk-ant-|ghp_|AIza|AQ[.]") | not)
   and .commit == "e83c5163316f89bfbde7d9ab23ca2e25604af290"
   and .tool == "eslint" then "ok" else tojson end' /tmp/summary.json || echo unreadable)"
 
+# The payload runs as root (the image's default user); anything that must see what the agent sees
+# runs through here, with the same HOME the entrypoint hands it.
+as_agent() {
+  runuser -u agent -- env HOME=/home/agent USER=agent PATH="${PATH}" "$@"
+}
+
 # Behavioral. A local HTTP gateway stands in for the Gemini API, so no key and no egress are
 # needed: it replies with the tool calls we want the policy engine to judge, and the agent runs
 # with -y (yolo), exactly as the pipelines invoke it. Reaching the gateway with curl is the
@@ -79,12 +85,14 @@ gw=$!
 sleep 1
 # The gateway auth type fails the CLI's auth validation, so pin the API-key path; the base URL
 # still redirects every model call to the local gateway.
-# ${HOME}, not a fixed path: the image now starts as root, so gemini reads /root/.gemini here.
-mkdir -p "${HOME}/.gemini" /tmp/probe-ws
-printf '%s\n' '{"security":{"auth":{"selectedType":"gemini-api-key"}}}' > "${HOME}/.gemini/settings.json"
+# Runs as `agent`, not as the image's default root: a policy that only root reads, or a user-scope
+# settings file only the agent has, would leave every probe below green while the agent is loose.
+mkdir -p /home/agent/.gemini /tmp/probe-ws
+printf '%s\n' '{"security":{"auth":{"selectedType":"gemini-api-key"}}}' > /home/agent/.gemini/settings.json
+chown -R agent:codacy /home/agent/.gemini /tmp/probe-ws
 cd /tmp/probe-ws || exit 1
 GEMINI_API_KEY=fake-test-key GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:${PORT}" \
-  timeout 120 gemini -y --skip-trust -m gemini-2.5-flash -o stream-json -p "go" \
+  as_agent timeout 120 gemini -y --skip-trust -m gemini-2.5-flash -o stream-json -p "go" \
   </dev/null >/tmp/probe.json 2>/dev/null
 kill "${gw}" 2>/dev/null
 
@@ -110,12 +118,6 @@ cli=$(verdict run_shell_command 'codacy --version')
 echo "ALLOW_CODACY_CLI=$([[ ${cli} == policy_violation || ${cli} == no_* ]] && echo blocked || echo allowed)"
 
 # --- privilege separation -------------------------------------------------------------------
-# The payload runs as root (the image's default user); anything that must see what the agent sees
-# runs through here, with the same HOME the entrypoint hands it.
-as_agent() {
-  runuser -u agent -- env HOME=/home/agent USER=agent PATH="${PATH}" "$@"
-}
-
 echo "UID_RUNNER=$(id -u runner 2>/dev/null || echo missing)"
 echo "UID_AGENT=$(id -u agent 2>/dev/null || echo missing)"
 echo "GID_CODACY=$(getent group codacy | cut -d: -f3)"
@@ -176,6 +178,14 @@ echo "SUB_SMUGGLE=$(denied codacy-analysis --directory info analyze && echo deni
 echo "SUB_SMUGGLE_REAL=$(denied codacy -o issues login && echo denied || echo allowed)"
 echo "SUB_VERSION=$(as_agent codacy --version >/dev/null 2>&1 && echo ok || echo failed)"
 
+# `init` and `config` are on the subcommand allowlist so the CLI can generate configuration the agent
+# then edits — but the CLI runs as runner through sudo, which forces umask 0022 unless reset.
+mkdir -p /tmp/cli-ws && chown agent:codacy /tmp/cli-ws && chmod 2775 /tmp/cli-ws
+(cd /tmp/cli-ws && as_agent codacy-analysis init) >/dev/null 2>&1
+echo "CLI_FILE_MODE=$(stat -c '%U:%G %a' /tmp/cli-ws/.codacy/codacy.config.json 2>/dev/null || echo missing)"
+echo "CLI_FILE_AGENT_WRITE=$(as_agent bash -c 'printf "" >> /tmp/cli-ws/.codacy/codacy.config.json' 2>/dev/null && echo ok || echo denied)"
+echo "CLI_DIR_AGENT_WRITE=$(as_agent touch /tmp/cli-ws/.codacy/agent-added 2>/dev/null && echo ok || echo denied)"
+
 # The handoff the clone init container performs: the agent owns the tree but cannot touch .git,
 # where git config carries settings the runner-side CLIs would execute. Last — it wipes /workspace.
 WS=/workspace
@@ -199,6 +209,46 @@ echo "GIT_WS_WRITE=$(as_agent touch "${WS}/agent-file" 2>/dev/null && echo ok ||
 as_agent bash -c "echo dirty >> ${WS}/README.md"
 echo "GIT_STATUS_DIRTY=$(as_agent git -C "${WS}" status --porcelain >/dev/null 2>&1 && echo ok || echo denied)"
 echo "GIT_DIFF_DIRTY=$(as_agent git -C "${WS}" diff --stat >/dev/null 2>&1 && echo ok || echo denied)"
+
+# The k8s init container replaces the image ENTRYPOINT with `clone-workspace.sh`, so the script gets
+# no privilege drop from entrypoint.sh and must perform its own — otherwise a hostile repository is
+# cloned and sanitized as uid 0. A local bare repo stands in for the remote via insteadOf.
+rm -rf /tmp/csrc /tmp/srv "${WS:?}"/* "${WS:?}"/.[!.]* 2>/dev/null
+mkdir -p /tmp/srv/org /tmp/csrc/.claude
+echo shadow > /tmp/csrc/.claude/settings.json
+echo fixture > /tmp/csrc/README.md
+git init -q /tmp/csrc && git -C /tmp/csrc add -A
+git -C /tmp/csrc -c user.email=t@codacy.com -c user.name=t commit -qm fixture
+git clone -q --bare /tmp/csrc /tmp/srv/org/repo.git
+# Agent-owned, or git's dubious-ownership guard rejects the source before the privilege check bites.
+chown -R agent:codacy /tmp/srv
+# The rewrite keeps a userinfo part so the sanitizer still has a credential to strip from .git/config.
+git config --system 'url.file://x@/tmp/srv/.insteadOf' 'https://x-access-token:PROBE_TOKEN@gh.probe/'
+clone_env=(GIT_TOKEN=PROBE_TOKEN CODACY_PROVIDER=gh CODACY_ORG_NAME=org CODACY_REPO_NAME=repo
+           CODACY_REPO_CLONE_HOST=gh.probe)
+
+env "${clone_env[@]}" /usr/local/bin/clone-workspace.sh >/dev/null 2>&1 \
+  && echo "CLONE_EXIT=0" || echo "CLONE_EXIT=$?"
+echo "CLONE_WS_OWNER=$(stat -c '%U' "${WS}/README.md" 2>/dev/null || echo missing)"
+echo "CLONE_GIT_OWNER=$(stat -c '%U:%G' "${WS}/.git" 2>/dev/null || echo missing)"
+echo "CLONE_ROOT_PERMS=$(stat -c '%U:%G %a' "${WS}" 2>/dev/null || echo missing)"
+echo "CLONE_SANITIZED=$([[ -e "${WS}/.claude" ]] && echo present || echo gone)"
+echo "CLONE_TOKEN=$(grep -q PROBE_TOKEN "${WS}/.git/config" 2>/dev/null && echo present || echo scrubbed)"
+# Privilege probe: a source only uid 0 can read. A clone that still succeeds is a clone still
+# running as root.
+rm -rf "${WS:?}"/* "${WS:?}"/.[!.]* 2>/dev/null
+chown -R root:root /tmp/srv/org/repo.git && chmod 700 /tmp/srv/org/repo.git
+env "${clone_env[@]}" /usr/local/bin/clone-workspace.sh >/dev/null 2>&1 \
+  && echo "CLONE_ROOT_ONLY_SRC=cloned" || echo "CLONE_ROOT_ONLY_SRC=refused"
+
+# Local flow: /workspace is a host bind mount full of the developer's files, so the agent adopts its
+# uid — chowning it would rewrite files the container does not own. Last: it remaps the agent user.
+mkdir -p /tmp/bind-ws && chown 1000:1000 /tmp/bind-ws && chmod 755 /tmp/bind-ws
+echo "BIND_ADOPT=$(CODACY_API_TOKEN=x WORKSPACE_DIR=/tmp/bind-ws /usr/local/bin/entrypoint.sh \
+  bash -c 'touch /tmp/bind-ws/f && id -u' 2>/dev/null)"
+mkdir -p /tmp/bind-runner && chown 1001:1003 /tmp/bind-runner
+echo "BIND_RUNNER_UID=$(CODACY_API_TOKEN=x WORKSPACE_DIR=/tmp/bind-runner /usr/local/bin/entrypoint.sh \
+  true >/dev/null 2>&1 && echo adopted || echo refused)"
 INNER
 )
 
@@ -238,6 +288,9 @@ SUB_FLAGFIRST=denied
 SUB_SMUGGLE=denied
 SUB_SMUGGLE_REAL=denied
 SUB_VERSION=ok
+CLI_FILE_MODE=runner:codacy 664
+CLI_FILE_AGENT_WRITE=ok
+CLI_DIR_AGENT_WRITE=ok
 GIT_HANDOFF=ok
 GIT_WS_OWNER=agent
 GIT_ROOT_PERMS=root:codacy 3775
@@ -248,7 +301,16 @@ GIT_DIR_DELETE=denied
 GIT_READ=ok
 GIT_WS_WRITE=ok
 GIT_STATUS_DIRTY=ok
-GIT_DIFF_DIRTY=ok'
+GIT_DIFF_DIRTY=ok
+CLONE_EXIT=0
+CLONE_WS_OWNER=agent
+CLONE_GIT_OWNER=root:codacy
+CLONE_ROOT_PERMS=root:codacy 3775
+CLONE_SANITIZED=gone
+CLONE_TOKEN=scrubbed
+CLONE_ROOT_ONLY_SRC=refused
+BIND_ADOPT=1000
+BIND_RUNNER_UID=refused'
 
 # Left column is expected, right is what the image did.
 diff -u <(printf '%s\n' "${EXPECTED}") <(printf '%s\n' "${ACTUAL}") || fail=1

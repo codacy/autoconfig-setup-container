@@ -37,6 +37,20 @@ fi
 chown root:runner /run/codacy/codacy.env
 chmod 640 /run/codacy/codacy.env
 
+# Local flow: /workspace is a host bind mount holding the developer's own files, so the agent adopts
+# its uid rather than chowning them. The server flow hands over a root-owned workspace
+# (handoff-workspace.sh), which is what the uid 0 case skips.
+WORKSPACE="${WORKSPACE_DIR:-/workspace}"
+ws_uid=$(stat -c %u "${WORKSPACE}" 2>/dev/null || echo 0)
+if [ "${ws_uid}" -ne 0 ] && [ "${ws_uid}" -ne "$(id -u agent)" ]; then
+  # Sharing runner's uid would hand the agent the Codacy token the whole split exists to withhold.
+  if [ "${ws_uid}" -eq "$(id -u runner)" ]; then
+    echo "ERROR: ${WORKSPACE} is owned by uid ${ws_uid}, which the container reserves for the Codacy CLI user" >&2
+    exit 1
+  fi
+  usermod -u "${ws_uid}" agent
+fi
+
 # Both users share the group `codacy`, so a group-writable file is readable and writable by the
 # agent and by the runner-run CLIs alike.
 umask 002

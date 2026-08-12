@@ -29,7 +29,10 @@ RUN npm install -g \
 # Shared group `codacy` (1003) lets both read and write /workspace/.codacy.
 # Group `runner` (1004) has exactly one member, so the staged credential file can be root-owned and
 # readable by runner alone — the shared group `codacy` would also hand it to the agent.
-RUN groupadd -g 1003 codacy \
+# The base image's `node` user holds uid 1000, the usual Linux desktop uid the entrypoint remaps
+# `agent` onto for bind-mounted workspaces; nothing runs as node any more.
+RUN userdel -r node \
+  && groupadd -g 1003 codacy \
   && groupadd -g 1004 runner \
   && useradd -m -u 1001 -g codacy -G runner runner \
   && useradd -m -u 1002 -g codacy agent \

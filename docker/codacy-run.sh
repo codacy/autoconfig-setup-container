@@ -49,4 +49,7 @@ done
 if [ -f /run/codacy/codacy.env ]; then
   set -a; . /run/codacy/codacy.env; set +a
 fi
+# sudo forces umask 0022 regardless of the caller's, so the config the CLI generates would land 644
+# and the agent — a different uid, sharing only the group — could not edit it.
+umask 002
 exec "/usr/local/bin/${name}-real" "$@"
