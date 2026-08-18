@@ -34,7 +34,9 @@ echo "POLICY_MODE=$(stat -c '%u:%a' "${POLICY_DIR}/10-codacy-lockdown.toml" || e
 echo "POLICY_DIR_MODE=$(stat -c '%u:%a' "${POLICY_DIR}" || echo unreadable)"
 echo "SETTINGS_MODE=$(stat -c '%u:%a' "${SETTINGS}" || echo unreadable)"
 echo "SETTINGS=$(jq -r 'if .security.blockGitExtensions == true
-  and ((.mcp.allowed // ["unset"]) | length) == 0 then "ok" else tojson end' "${SETTINGS}" || echo unreadable)"
+  and ((.mcp.allowed // ["unset"]) | length) == 0
+  and .model.maxSessionTurns == 200
+  and .privacy.usageStatisticsEnabled == false then "ok" else tojson end' "${SETTINGS}" || echo unreadable)"
 
 # GEMINI_API_KEY really is in the agent's environment, so both Google key shapes are staged here.
 # A 40-char hex commit SHA is legitimate summary content and must survive.
