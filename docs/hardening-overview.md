@@ -228,32 +228,21 @@ actually contains a hostile repository. The admin policy raises the cost of the 
 
 ## Run limits and telemetry (Gemini only)
 
-`model.maxSessionTurns: 100` bounds the run at 100 turns, a turn being one model request plus its
-tool calls. The default is `-1`, unlimited, so without it the 70-minute wall-clock timeout would be
-the only thing ending a runaway or injected tool loop. An instrumented run against a small repository
-(5 files, 3 languages) used 23 turns in 6m45s, which puts the cap at roughly 4.3× a measured run and
-about 29 minutes of the timeout window.
+`model.maxSessionTurns: 100` bounds the run at 100 turns; the default is `-1`, unlimited, so
+otherwise only the 70-minute timeout ends a runaway or injected tool loop. A measured run on a small
+repository used 23 turns, so the cap is ~4.3x that. It bounds loops, not spend — cost per turn varies
+too much to be a budget.
 
-The cap bounds **loops, not spend**. Cost per turn is not constant — a turn that reads several large
-files costs far more than one that answers — so this is an order-of-magnitude guard against a run
-that never stops, not a budget.
+Tripping it is a hard stop: the CLI exits 53, which `derive_outcome` maps to `EXIT_AGENT_ERROR` (4)
+(`docker/agent-lib.sh:83-87`), and the skill has not yet written the configuration summary, so AAM
+gets the stub upload (`docker/server-pipeline.sh:152-166`). That is why the value is generous.
 
-Tripping it is a hard stop, not a graceful wind-down. The CLI emits a `FatalTurnLimitedError` result
-and exits 53; `derive_outcome` has no case for 53, so the catch-all maps it to `EXIT_AGENT_ERROR` (4)
-with reason "the agent exited with code 53" (`docker/agent-lib.sh:83-87`). The skill writes the
-configuration summary as its last step, so a run cut off at the cap has not written one: what AAM
-receives is the stub the pipeline uploads in that case — `{}` plus the `outcome` and `run` blocks
-(`docker/server-pipeline.sh:152-166`), with none of the configuration findings. That harsh failure
-mode is why the value is generous rather than close to the measured run.
+`privacy.usageStatisticsEnabled: false` turns off CLI telemetry, which otherwise posts once per
+session to Google's Clearcut endpoint (`play.googleapis.com/log`) with an install-fingerprint header,
+and removes one destination from the egress allowlist.
 
-`privacy.usageStatisticsEnabled: false` turns off the CLI's telemetry, which otherwise posts once per
-session to Google's Clearcut endpoint (`play.googleapis.com/log`) and sends an install-fingerprint
-header. It also removes one destination from the egress allowlist that has to be maintained outside
-this repository.
-
-`test/test-hardening.sh` asserts the cap behaviourally, not just in the file: a local gateway that
-keeps asking for tool calls and never answers can only end at the cap, and the run dies with exit 53,
-`FatalTurnLimitedError`, after exactly 100 turns.
+`test/test-hardening.sh` asserts the cap behaviourally: a gateway that only ever asks for tool calls
+dies at exactly 100 turns with exit 53.
 
 ## Claude is not hardened
 
