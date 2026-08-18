@@ -214,7 +214,7 @@ checks that against a fake local Gemini gateway: `-y` does auto-approve an unlis
 lands, and `codacy --version` still gets through.
 
 The system-scope settings file adds four keys (`docker/gemini-settings.json:1`):
-`security.blockGitExtensions: true`, an empty `mcp.allowed` list, `model.maxSessionTurns: 100`, and
+`security.blockGitExtensions: true`, an empty `mcp.allowed` list, `model.maxSessionTurns: 200`, and
 `privacy.usageStatisticsEnabled: false`. Because the file is system-scope, a `.gemini/settings.json`
 inside the analysed repository cannot raise any of them, and there is no env var or CLI flag for the
 turn cap either.
@@ -228,10 +228,11 @@ actually contains a hostile repository. The admin policy raises the cost of the 
 
 ## Run limits and telemetry (Gemini only)
 
-`model.maxSessionTurns: 100` bounds the run at 100 turns; the default is `-1`, unlimited, so
-otherwise only the 70-minute timeout ends a runaway or injected tool loop. A measured run on a small
-repository used 23 turns, so the cap is ~4.3x that. It bounds loops, not spend — cost per turn varies
-too much to be a budget.
+`model.maxSessionTurns: 200` bounds the run at 200 turns; the default is `-1`, unlimited, so
+otherwise only the 70-minute timeout ends a runaway or injected tool loop. A measured run on a
+41-language repository (855 files) used about 80 turns in 12m29s, so the cap is roughly 2.5x the
+largest run we have measured. It bounds loops, not spend — cost per turn varies too much to be a
+budget.
 
 `privacy.usageStatisticsEnabled: false` turns off CLI telemetry, which otherwise posts once per
 session to Google's Clearcut endpoint (`play.googleapis.com/log`) with an install-fingerprint header,
@@ -359,7 +360,7 @@ the timeout is still the only bound.
 | Secrecy rules appended to the prompt (advisory) | Agent-agnostic | `docker/agent-lib.sh:19-35` |
 | Root-owned admin policy: deny fetch/search tools, all MCP tools, egress shell prefixes | **Gemini only** | `docker/gemini-policy.toml`, `docker/Dockerfile:69-74` |
 | System settings: `blockGitExtensions`, empty MCP allowlist | **Gemini only** | `docker/gemini-settings.json` |
-| Turn cap of 100, hard exit 53 (bounds loops, not spend) | **Gemini only** | `docker/gemini-settings.json` |
+| Turn cap of 200, hard exit 53 (bounds loops, not spend) | **Gemini only** | `docker/gemini-settings.json` |
 | CLI telemetry off | **Gemini only** | `docker/gemini-settings.json` |
 | CLI version pin justified by policy-engine semantics | **Gemini only** | `docker/Dockerfile:18-19` |
 | `--setting-sources user`, `--strict-mcp-config` (pre-existing) | **Claude only** | `docker/server-pipeline.sh:67-68` |
