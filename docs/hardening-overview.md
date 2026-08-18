@@ -233,10 +233,6 @@ otherwise only the 70-minute timeout ends a runaway or injected tool loop. A mea
 repository used 23 turns, so the cap is ~4.3x that. It bounds loops, not spend — cost per turn varies
 too much to be a budget.
 
-Tripping it is a hard stop: the CLI exits 53, which `derive_outcome` maps to `EXIT_AGENT_ERROR` (4)
-(`docker/agent-lib.sh:83-87`), and the skill has not yet written the configuration summary, so AAM
-gets the stub upload (`docker/server-pipeline.sh:152-166`). That is why the value is generous.
-
 `privacy.usageStatisticsEnabled: false` turns off CLI telemetry, which otherwise posts once per
 session to Google's Clearcut endpoint (`play.googleapis.com/log`) with an install-fingerprint header,
 and removes one destination from the egress allowlist.
