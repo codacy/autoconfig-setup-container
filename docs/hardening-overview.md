@@ -241,9 +241,6 @@ gets the stub upload (`docker/server-pipeline.sh:152-166`). That is why the valu
 session to Google's Clearcut endpoint (`play.googleapis.com/log`) with an install-fingerprint header,
 and removes one destination from the egress allowlist.
 
-`test/test-hardening.sh` asserts the cap behaviourally: a gateway that only ever asks for tool calls
-dies at exactly 100 turns with exit 53.
-
 ## Claude is not hardened
 
 **Accepted risk.** Claude has no counterpart to the Gemini admin policy: no deny list, no
