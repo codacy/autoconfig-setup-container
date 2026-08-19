@@ -1,1 +1,1 @@
-{"security":{"blockGitExtensions":true},"mcp":{"allowed":[]}}
+{"security":{"blockGitExtensions":true},"mcp":{"allowed":[]},"model":{"maxSessionTurns":200},"privacy":{"usageStatisticsEnabled":false}}
