@@ -49,6 +49,12 @@ RUN chown -R root:root /etc/gemini-cli \
 
 USER node
 
+# The admin policy already removes google_web_search and web_fetch from the registry; this tells the
+# model they are gone, so it stops spending turns calling a tool that answers "Tool not found".
+# node-owned, unlike the policy: gemini writes ~/.gemini/tmp at runtime, and this file is guidance,
+# not a control — the control is /etc/gemini-cli/policies, which the agent cannot touch.
+COPY --chown=node:node docker/gemini-context.md /home/node/.gemini/GEMINI.md
+
 # Install skills into ~/.claude/commands/ — claude reads these natively without --plugin-dir,
 # which avoids the v2.1.123 regression where --plugin-dir silently fails in stream-json mode
 COPY --chown=node:node docker/claude-settings.json /home/node/.claude/settings.json
