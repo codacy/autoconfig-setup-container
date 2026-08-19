@@ -36,7 +36,9 @@ echo "SETTINGS_MODE=$(stat -c '%u:%a' "${SETTINGS}" || echo unreadable)"
 echo "SETTINGS=$(jq -r 'if .security.blockGitExtensions == true
   and ((.mcp.allowed // ["unset"]) | length) == 0
   and .model.maxSessionTurns == 200
-  and .privacy.usageStatisticsEnabled == false then "ok" else tojson end' "${SETTINGS}" || echo unreadable)"
+  and .privacy.usageStatisticsEnabled == false
+  and .security.auth.selectedType == "gateway"
+  and .security.auth.useExternal == true then "ok" else tojson end' "${SETTINGS}" || echo unreadable)"
 
 # GEMINI_API_KEY really is in the agent's environment, so both Google key shapes are staged here.
 # A 40-char hex commit SHA is legitimate summary content and must survive.
@@ -84,10 +86,8 @@ JS
 node /tmp/gateway.js &
 gw=$!
 sleep 1
-# The gateway auth type fails the CLI's auth validation, so pin the API-key path; the base URL
-# still redirects every model call to the local gateway.
-mkdir -p /home/node/.gemini /tmp/probe-ws
-printf '%s\n' '{"security":{"auth":{"selectedType":"gemini-api-key"}}}' > /home/node/.gemini/settings.json
+# No user-scope auth pin: the system settings now declare the gateway mode the shipped image runs in.
+mkdir -p /tmp/probe-ws
 cd /tmp/probe-ws || exit 1
 GEMINI_API_KEY=fake-test-key GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:${PORT}" \
   timeout 120 gemini -y --skip-trust -m gemini-2.5-flash -o stream-json -p "go" \
@@ -116,6 +116,15 @@ echo "CONTEXT_LOADED=$([[ -f /tmp/context-canary ]] && echo present || echo abse
 # No `case` — host bash 3.2 miscounts parens inside a heredoc in a command substitution.
 cli=$(verdict run_shell_command 'codacy --version')
 echo "ALLOW_CODACY_CLI=$([[ ${cli} == policy_violation || ${cli} == no_* ]] && echo blocked || echo allowed)"
+
+# A run with no base URL must still start. Refused auth exits 41 with an empty stream, so the init
+# event is the signal; waiting for the terminal result would cost the CLI's whole 200s retry backoff.
+mkdir -p /tmp/nogw-ws
+cd /tmp/nogw-ws || exit 1
+GEMINI_API_KEY=fake-test-key timeout 15 gemini -y --skip-trust -m gemini-2.5-flash -o stream-json \
+  -p "hi" </dev/null >/tmp/nogw.json 2>/dev/null
+echo "NO_GATEWAY_AUTH=$(jq -rs 'if any(.[]; .type == "init") then "started" else "refused" end' \
+  /tmp/nogw.json 2>/dev/null)"
 INNER
 )
 
@@ -131,7 +140,8 @@ DENY_WEB_FETCH=tool_not_registered
 DENY_WEB_SEARCH=tool_not_registered
 EGRESS_CANARY=blocked
 CONTEXT_LOADED=present
-ALLOW_CODACY_CLI=allowed'
+ALLOW_CODACY_CLI=allowed
+NO_GATEWAY_AUTH=started'
 
 # Left column is expected, right is what the image did.
 diff -u <(printf '%s\n' "${EXPECTED}") <(printf '%s\n' "${ACTUAL}") || fail=1
