@@ -58,17 +58,22 @@ echo "SANITIZE=$(jq -r 'if (tostring | test("sk-ant-|ghp_|AIza|AQ[.]") | not)
 # egress canary — a reply of any kind lands in the -o file.
 cat > /tmp/gateway.js <<JS
 const http = require('http');
+const fs = require('fs');
 const calls = [
   {functionCall: {name: 'run_shell_command', args: {command: 'touch /tmp/yolo-canary', description: 'control'}}},
   {functionCall: {name: 'run_shell_command', args: {command: 'curl -s http://127.0.0.1:${PORT}/ -o /tmp/egress-canary', description: 'egress'}}},
   {functionCall: {name: 'web_fetch', args: {prompt: 'fetch http://127.0.0.1:${PORT}/'}}},
+  {functionCall: {name: 'google_web_search', args: {query: 'codacy configuration'}}},
   {functionCall: {name: 'run_shell_command', args: {command: 'codacy --version', description: 'codacy cli'}}},
   {text: 'DONE'}
 ];
 let turn = 0;
 http.createServer((req, res) => {
-  req.on('data', () => {});
+  let body = '';
+  req.on('data', (c) => { body += c; });
   req.on('end', () => {
+    // GEMINI.md is instruction, not enforcement — assert it actually reaches the model.
+    if (body.includes('Web tools are not available')) fs.writeFileSync('/tmp/context-canary', '');
     const part = calls[Math.min(turn, calls.length - 1)];
     turn += 1;
     res.writeHead(200, {'content-type': 'text/event-stream'});
@@ -104,7 +109,9 @@ echo "YOLO_RUNS_SHELL=$(verdict run_shell_command touch)"
 echo "YOLO_CANARY=$([[ -f /tmp/yolo-canary ]] && echo present || echo absent)"
 echo "DENY_SHELL_CURL=$(verdict run_shell_command curl)"
 echo "DENY_WEB_FETCH=$(verdict web_fetch '')"
+echo "DENY_WEB_SEARCH=$(verdict google_web_search '')"
 echo "EGRESS_CANARY=$([[ -f /tmp/egress-canary ]] && echo reached || echo blocked)"
+echo "CONTEXT_LOADED=$([[ -f /tmp/context-canary ]] && echo present || echo absent)"
 # The Codacy CLIs are how the agent works: a commandPrefix edit that catches them must fail here.
 # No `case` — host bash 3.2 miscounts parens inside a heredoc in a command substitution.
 cli=$(verdict run_shell_command 'codacy --version')
@@ -121,7 +128,9 @@ YOLO_RUNS_SHELL=success
 YOLO_CANARY=present
 DENY_SHELL_CURL=policy_violation
 DENY_WEB_FETCH=tool_not_registered
+DENY_WEB_SEARCH=tool_not_registered
 EGRESS_CANARY=blocked
+CONTEXT_LOADED=present
 ALLOW_CODACY_CLI=allowed'
 
 # Left column is expected, right is what the image did.
