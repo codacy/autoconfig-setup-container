@@ -17,11 +17,13 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 ARG CLAUDE_CODE_VERSION=2.1.226
 # Pinned: policy-engine semantics change between minors, so a bump must be tested, never picked up silently
 ARG GEMINI_CLI_VERSION=0.54.4
+ARG CODACY_CLOUD_CLI_VERSION=1.9.0
+ARG CODACY_ANALYSIS_CLI_VERSION=0.22.0
 RUN npm install -g \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     @google/gemini-cli@${GEMINI_CLI_VERSION} \
-    @codacy/codacy-cloud-cli \
-    @codacy/analysis-cli
+    @codacy/codacy-cloud-cli@${CODACY_CLOUD_CLI_VERSION} \
+    @codacy/analysis-cli@${CODACY_ANALYSIS_CLI_VERSION}
 
 # Pre-bake skills — Claude loads via --plugin-dir, Gemini installs from local path
 # ADD'ing the master ref content makes Docker invalidate this layer whenever codacy-skills master moves,
