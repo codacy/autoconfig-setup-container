@@ -23,6 +23,9 @@ RUN npm install -g \
     @codacy/codacy-cloud-cli \
     @codacy/analysis-cli
 
+# Heap cap below the 2Gi pod limit: a Node process that outgrows it dies with a readable heap error, not a silent cgroup OOM kill
+ENV NODE_OPTIONS=--max-old-space-size=1536
+
 # Pre-bake skills — Claude loads via --plugin-dir, Gemini installs from local path
 # ADD'ing the master ref content makes Docker invalidate this layer whenever codacy-skills master moves,
 # so a fresh `docker build` always gets the latest skills without --no-cache.
