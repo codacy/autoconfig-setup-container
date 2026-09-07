@@ -172,7 +172,8 @@ if ! /usr/local/bin/summary-sanitize.sh "${SUMMARY_PATH}"; then
   exit ${EXIT_UPLOAD_FAILED}
 fi
 
-echo "==> Uploading summary (${SUMMARY_PATH}) to RESULT_UPLOAD_URL"
+echo "==> Uploading summary (${SUMMARY_PATH}, $(wc -c < "${SUMMARY_PATH}" | tr -d " ") bytes) to RESULT_UPLOAD_URL"
+UPLOAD_RESPONSE=$(mktemp)
 HTTP_CODE=$(
   curl --silent --show-error \
     --request PUT \
@@ -182,12 +183,15 @@ HTTP_CODE=$(
     --max-time 60 \
     --upload-file "${SUMMARY_PATH}" \
     --write-out '%{http_code}' \
-    --output /dev/null \
+    --output "${UPLOAD_RESPONSE}" \
     "${RESULT_UPLOAD_URL}"
 )
+CURL_RC=$?
 
 if [[ -z "${HTTP_CODE}" || "${HTTP_CODE}" -lt 200 || "${HTTP_CODE}" -ge 300 ]]; then
-  echo "ERROR: summary upload failed with HTTP '${HTTP_CODE}'" >&2
+  echo "ERROR: summary upload failed with HTTP '${HTTP_CODE}' (curl exit ${CURL_RC})" >&2
+  # S3 error XML carries <Code>/<Message>; 600 bytes covers them and keeps signed-URL echoes out of the log.
+  echo "ERROR: upload response: $(head -c 600 "${UPLOAD_RESPONSE}" | tr -d '\n')" >&2
   exit ${EXIT_UPLOAD_FAILED}
 fi
 
