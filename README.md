@@ -5,10 +5,12 @@
 **1. Create a `.env` file** in this directory:
 
 ```
-CODACY_API_TOKEN=<your-codacy-api-token>
+CODACY_PROJECT_TOKEN=<your-codacy-repository-token>
 ANTHROPIC_API_KEY=<your-anthropic-api-key>
 SOURCE_PATH=/absolute/path/to/your/repo
 ```
+
+Get the repository token from **Codacy > Repository > Settings > Integrations > Project API token**.
 
 `GEMINI_API_KEY` is optional — set it instead of (or alongside) `ANTHROPIC_API_KEY` to use Gemini.
 
@@ -105,7 +107,7 @@ http.server.HTTPServer(('0.0.0.0', 8080), H).serve_forever()
 
 Then set `RESULT_UPLOAD_URL=http://host.docker.internal:8080/upload`.
 
-Required env vars for the server pipeline: `CODACY_API_TOKEN`, `ANTHROPIC_API_KEY`, `GIT_TOKEN`,
+Required env vars for the server pipeline: `CODACY_PROJECT_TOKEN`, `ANTHROPIC_API_KEY`, `GIT_TOKEN`,
 `CODACY_PROVIDER`, `CODACY_ORG_NAME`, `CODACY_REPO_NAME`, `RESULT_UPLOAD_URL`. The script fails fast
 if any are missing.
 

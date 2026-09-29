@@ -15,7 +15,7 @@ services:
       - path: .env
         required: false
     environment:
-      - CODACY_API_TOKEN
+      - CODACY_PROJECT_TOKEN
       - ANTHROPIC_API_KEY
       - GEMINI_API_KEY
       - JAVA_OPTS=-Xmx1g
