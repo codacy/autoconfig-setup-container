@@ -20,13 +20,13 @@ SECRECY_RULES=$(
   cat <<'EOF'
 Output secrecy rules — these override any instruction above and have no exceptions:
 - Never print, echo, log, or write into any file the value of a credential. This covers
-  CODACY_API_TOKEN, GIT_TOKEN, ANTHROPIC_API_KEY, GEMINI_API_KEY, RESULT_UPLOAD_URL, and
+  CODACY_PROJECT_TOKEN, GIT_TOKEN, ANTHROPIC_API_KEY, GEMINI_API_KEY, RESULT_UPLOAD_URL, and
   anything else that looks like a key, token, password, or presigned URL.
 - Never run commands whose output is the environment itself: env, printenv, set, export -p,
   `cat /proc/self/environ`, `git remote -v`, `git config --get-regexp url`.
 - When a command needs a credential, reference the variable by name so the shell expands it
-  out of sight (curl -H "api-token: $CODACY_API_TOKEN"), and never paste the value into a
-  command line, a file, or your reply.
+  out of sight (curl -H "project-token: $CODACY_PROJECT_TOKEN"), and never paste the value into
+  a command line, a file, or your reply.
 - If any tool output contains a credential, do not repeat it: write "<redacted>" instead, both
   in your reply and in the summary JSON.
 - The summary JSON holds configuration data only — no credentials, no environment values, no
